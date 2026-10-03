@@ -1,0 +1,29 @@
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+    <!-- Chat bubble backdrop -->
+    <path
+        android:fillColor="#FFFFFF"
+        android:pathData="M32,32h44c5.5,0 10,4.5 10,10v24c0,5.5 -4.5,10 -10,10H46l-14,10v-10h0c-5.5,0 -10,-4.5 -10,-10V42c0,-5.5 4.5,-10 10,-10z" />
+    <!-- Wi-Fi signal arcs inside chat bubble -->
+    <!-- Center Dot -->
+    <path
+        android:fillColor="#007A3D"
+        android:pathData="M54,63m-3.5,0a3.5,3.5 0 1,0 7,0a3.5,3.5 0 1,0 -7,0" />
+    <!-- Middle Arc -->
+    <path
+        android:fillColor="#00000000"
+        android:strokeColor="#007A3D"
+        android:strokeWidth="3.2"
+        android:strokeLineCap="round"
+        android:pathData="M46.5,56c4,-3.8 11,-3.8 15,0" />
+    <!-- Top Arc -->
+    <path
+        android:fillColor="#00000000"
+        android:strokeColor="#007A3D"
+        android:strokeWidth="3.2"
+        android:strokeLineCap="round"
+        android:pathData="M40.5,49c7.5,-7.2 19.5,-7.2 27,0" />
+</vector>
