@@ -18,7 +18,7 @@ import java.io.File
  * WS-1: قبل v9 كان_contact بينحفظ عنوانه كـ "p2p-<endpointId>" وده كان بيمنع
  * أي محاولة LAN خالص. دلوقتي الـ endpoint بيتخزّن في عمود مستقل
  * `meshEndpointId` والعنوان الحقيقي بيفضل محفوظ، والـ migration دي بتطلّع
- * الـ endpoint من العناوين القديمة عشان من ضيّع我们 الوصول بتاعه.
+ * الـ endpoint من العناوين القديمة عشان ما نضيّعش الوصول ليهم.
  */
 @RunWith(RobolectricTestRunner::class)
 @Config(sdk = [36])

@@ -682,7 +682,7 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
-    /** هل麦克روفон متاح؟ لو لأ، المتصل بيبقى صامت خالص. */
+    /** Whether the microphone is available. Without it the caller ends up fully silent. */
     fun hasRecordAudioPermission(): Boolean =
         ContextCompat.checkSelfPermission(
             getApplication(), android.Manifest.permission.RECORD_AUDIO

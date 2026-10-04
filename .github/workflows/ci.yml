@@ -2,9 +2,9 @@ name: CI
 
 on:
   push:
-    branches: [ main, master ]
+    branches: [ main, master, 'phase/**' ]
   pull_request:
-    branches: [ main, master ]
+    branches: [ main, master, 'phase/**' ]
   workflow_dispatch:
 
 concurrency:
@@ -12,13 +12,16 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  build:
-    name: Build, unit tests and lint
+  verify:
+    name: Verify (tests, lint, character and secret checks)
     runs-on: ubuntu-latest
     timeout-minutes: 45
 
     steps:
       - uses: actions/checkout@v4
+        with:
+          # Needed so `git grep --cached` works in the secret / character checks.
+          fetch-depth: 0
 
       - name: Set up JDK 21
         uses: actions/setup-java@v4
@@ -29,33 +32,20 @@ jobs:
       - name: Set up Gradle
         uses: gradle/actions/setup-gradle@v4
 
-      - name: Cache and restore
+      - name: Cache
         uses: actions/cache@v4
         with:
-          path: |
-            ~/.gradle/caches/build-cache-*
-            app/build/reports
+          path: ~/.gradle/caches/build-cache-*
           key: ${{ runner.os }}-gradle-${{ hashFiles('**/*.gradle.kts', 'gradle/libs.versions.toml') }}
           restore-keys: ${{ runner.os }}-gradle-
 
-      # The project's Room schema export depends on this existing file, which is
-      # intentionally not committed (it points at a machine-specific SDK path).
       - name: Write local.properties
         run: echo "sdk.dir=$ANDROID_HOME" > local.properties
 
-      - name: Compile
-        run: ./gradlew --no-daemon :app:compileDebugKotlin
-
-      # Baseline gate: unit tests must be fully green. No test may be deleted or
-      # weakened to make this pass.
-      - name: Unit tests
-        run: ./gradlew --no-daemon :app:testDebugUnitTest
-
-      - name: Lint
-        run: ./gradlew --no-daemon :app:lintDebug
-
-      - name: Assemble debug
-        run: ./gradlew --no-daemon :app:assembleDebug
+      # Single entry point, identical to what the pre-commit hook and a local
+      # run use, so a green run here means a green run locally.
+      - name: Verify
+        run: chmod +x scripts/verify.sh && scripts/verify.sh
 
       - name: Upload test report
         if: always()
