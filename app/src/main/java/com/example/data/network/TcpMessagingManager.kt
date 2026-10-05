@@ -7,7 +7,13 @@ import com.example.data.local.ChatMessageEntity
 import com.example.data.local.ContactEntity
 import com.example.data.local.GroupEntity
 import com.example.data.local.MessageStatus
+import com.lanchat.offline.messenger.R
 import com.example.data.local.ReplayGuard
+import com.example.data.security.InboundMessageVerifier
+import com.example.data.security.InboundVerdict
+import com.example.data.security.MessageCounters
+import com.example.data.security.MessageSigningPayload
+import com.example.data.security.ReplayWindow
 import com.example.data.local.UserPreferences
 import com.example.data.security.EncryptionManager
 import com.example.service.LanNotificationHelper
@@ -82,6 +88,9 @@ private val inFlightSends = ConcurrentHashMap.newKeySet<String>()
  * recorded on disk for the retention window.
  */
 private val replayGuard: ReplayGuard by lazy { ReplayGuard(database.seenIdDao()) }
+
+/** Phase 1.3 persisted per-peer counters for the replay window. */
+private val messageCounters: MessageCounters by lazy { MessageCounters(database.peerCounterDao()) }
     private var serverSocket: ServerSocket? = null
     private val activeConversationId = AtomicReference<String?>(null)
     private val connectionSemaphore = Semaphore(MAX_CONCURRENT_CONNECTIONS)
@@ -282,14 +291,25 @@ private val replayGuard: ReplayGuard by lazy { ReplayGuard(database.seenIdDao())
                     } else false
                 }
                 else -> {
-                    val signature = EncryptionManager.getPairwiseManager()?.signData(msg.text.toByteArray(Charsets.UTF_8))
-                    val packet = TextMessagePacket(
-                        messageId = msg.id, senderId = userPreferences.deviceId,
-                        senderName = userPreferences.displayName, recipientId = peerId,
-                        text = msg.text, isDeveloper = userPreferences.isDeveloper,
-                        timestamp = msg.timestamp, signatureBase64 = signature
+                    // Phase 1.3: sign the full field set, including the counter.
+                    val signed = signForRecipient(
+                        recipientId = peerId,
+                        messageId = msg.id,
+                        timestamp = msg.timestamp,
+                        content = msg.text.toByteArray(Charsets.UTF_8),
                     )
-                    sendPacketDirect(ip, port, packet)
+                    if (signed == null) {
+                        false
+                    } else {
+                        val packet = TextMessagePacket(
+                            messageId = msg.id, senderId = userPreferences.deviceId,
+                            senderName = userPreferences.displayName, recipientId = peerId,
+                            text = msg.text, isDeveloper = userPreferences.isDeveloper,
+                            timestamp = msg.timestamp,
+                            signatureBase64 = signed.second, counter = signed.first
+                        )
+                        sendPacketDirect(ip, port, packet, peerId)
+                    }
                 }
             }
     }
@@ -595,15 +615,69 @@ private val replayGuard: ReplayGuard by lazy { ReplayGuard(database.seenIdDao())
                     return
                 }
 
-                if (packet.signatureBase64 != null) {
-                    val peer = database.contactDao().getContactById(packet.senderId)
-                    if (peer?.publicKeyBase64 != null) {
-                        val valid = EncryptionManager.getPairwiseManager()?.verifySignature(
-                            peer.publicKeyBase64, packet.text.toByteArray(Charsets.UTF_8), packet.signatureBase64
-                        ) ?: false
-                        if (!valid) {
-                            Log.w(TAG, "Security Alert: Signature mismatch for message ${packet.messageId} from ${packet.senderId}")
-                        }
+                // Phase 1.3: the signature is enforced, not merely logged. A
+                // packet that cannot be authenticated, or that falls outside the
+                // replay window, is refused here and never reaches the database.
+                // Before this a mismatch produced a log line and the message was
+                // delivered anyway, and a missing signature was not checked at all.
+                val inboundSender = database.contactDao().getContactById(packet.senderId)
+                val senderKey = inboundSender?.publicKeyBase64
+                    ?: EncryptionManager.getPairwiseManager()
+                        ?.peerPublicKeyFor(packet.senderId)
+
+                val verdict = InboundMessageVerifier.verify(
+                    candidate = InboundMessageVerifier.Candidate(
+                        senderId = packet.senderId,
+                        recipientId = userPreferences.deviceId,
+                        messageId = packet.messageId,
+                        timestamp = packet.timestamp,
+                        counter = packet.counter,
+                        protocolVersion = packet.protocolVersion,
+                        signatureBase64 = packet.signatureBase64,
+                        contentDigestHex = MessageSigningPayload.digestHex(
+                            packet.text.toByteArray(Charsets.UTF_8)
+                        ),
+                        alreadySeen = replayGuard.wasRecorded(packet.senderId, packet.messageId),
+                    ),
+                    senderPublicKeyBase64 = senderKey,
+                    replayDecision = ReplayWindow(
+                        restoredHighWaterMark = messageCounters.highWaterMarkOf(packet.senderId)
+                    ).observe(
+                        packet.counter,
+                        alreadySeen = replayGuard.wasRecorded(packet.senderId, packet.messageId),
+                    ),
+                )
+
+                when (verdict) {
+                    is InboundVerdict.Accepted -> {
+                        replayGuard.tryAccept(packet.senderId, packet.messageId)
+                        messageCounters.raiseHighWaterMark(packet.senderId, packet.counter)
+                    }
+                    is InboundVerdict.UnsupportedProtocol -> {
+                        Log.w(TAG, "Refusing ${packet.messageId}: protocol ${verdict.version} is older than " +
+                            ProtocolVersion.MINIMUM)
+                        notePeerNeedsUpdate(packet.senderId, packet.recipientId, inboundSender?.displayName)
+                        return
+                    }
+                    InboundVerdict.MissingSignature -> {
+                        Log.w(TAG, "Refusing unsigned message ${packet.messageId} from ${packet.senderId}")
+                        return
+                    }
+                    InboundVerdict.UnknownSender -> {
+                        Log.w(TAG, "Refusing ${packet.messageId}: no key for ${packet.senderId}")
+                        return
+                    }
+                    InboundVerdict.BadSignature -> {
+                        Log.w(TAG, "Refusing ${packet.messageId}: signature does not verify")
+                        return
+                    }
+                    InboundVerdict.Duplicate -> {
+                        Log.w(TAG, "Refusing duplicate ${packet.messageId}")
+                        return
+                    }
+                    InboundVerdict.TooOld -> {
+                        Log.w(TAG, "Refusing ${packet.messageId}: counter outside the replay window")
+                        return
                     }
                 }
 
@@ -946,13 +1020,27 @@ private val replayGuard: ReplayGuard by lazy { ReplayGuard(database.seenIdDao())
         // timestamp and lose the original ordering.
         if (existingMessageId == null) database.chatMessageDao().insertMessage(entity)
 
-        val signature = EncryptionManager.getPairwiseManager()?.signData(text.trim().toByteArray(Charsets.UTF_8))
+        // Phase 1.3: sign the full field set, not just the text.
+        val signed = signForRecipient(
+            recipientId = recipientId,
+            messageId = messageId,
+            timestamp = entity.timestamp,
+            content = text.toByteArray(Charsets.UTF_8),
+        )
+        if (signed == null) {
+            // Fail closed, as 1.2 established: a message that cannot be protected
+            // for its recipient is not sent, and the row says why.
+            database.chatMessageDao().updateMessageStatus(messageId, MessageStatus.FAILED)
+            return@withContext Result.failure(
+                java.io.IOException("Cannot sign message for $recipientId: no pairwise session")
+            )
+        }
 
         val packet = TextMessagePacket(
             messageId = messageId, senderId = userPreferences.deviceId,
             senderName = userPreferences.displayName, recipientId = recipientId,
             text = text, isDeveloper = userPreferences.isDeveloper, timestamp = entity.timestamp,
-            signatureBase64 = signature
+            signatureBase64 = signed.second, counter = signed.first
         )
         val transport = sendPacketDirectWithTransport(recipientIp, recipientPort, packet)
         val viaMesh = transport == SendTransport.MESH
@@ -1005,17 +1093,27 @@ private val replayGuard: ReplayGuard by lazy { ReplayGuard(database.seenIdDao())
         )
         database.chatMessageDao().insertMessage(entity)
 
-        val signature = EncryptionManager.getPairwiseManager()?.signData(text.trim().toByteArray(Charsets.UTF_8))
-
-        val packet = TextMessagePacket(
-            messageId = messageId, senderId = userPreferences.deviceId,
-            senderName = userPreferences.displayName, recipientId = groupId, text = text,
-            isGroup = true, groupId = groupId, groupName = groupName,
-            isDeveloper = userPreferences.isDeveloper, timestamp = entity.timestamp,
-            signatureBase64 = signature
-        )
+        // Phase 1.3: the signed field set contains the recipient and the counter,
+        // so a group send cannot reuse one packet across peers. Each leg is signed
+        // separately for the peer it is going to, with its own counter.
         val delivered = fanOutToGroup(contacts) { peer ->
-            sendPacketDirect(peer.ipAddress, peer.tcpPort, packet, peer.deviceId)
+            val signed = signForRecipient(
+                recipientId = peer.deviceId,
+                messageId = messageId,
+                timestamp = entity.timestamp,
+                content = text.toByteArray(Charsets.UTF_8),
+            ) ?: return@fanOutToGroup false
+            sendPacketDirect(
+                peer.ipAddress, peer.tcpPort,
+                TextMessagePacket(
+                    messageId = messageId, senderId = userPreferences.deviceId,
+                    senderName = userPreferences.displayName, recipientId = groupId, text = text,
+                    isGroup = true, groupId = groupId, groupName = groupName,
+                    isDeveloper = userPreferences.isDeveloper, timestamp = entity.timestamp,
+                    signatureBase64 = signed.second, counter = signed.first
+                ),
+                peer.deviceId,
+            )
         }
         if (delivered > 0) {
             if (userPreferences.isHapticEnabled) FeedbackUtils.vibrateMessageSent(context)
@@ -1559,17 +1657,9 @@ private val replayGuard: ReplayGuard by lazy { ReplayGuard(database.seenIdDao())
 
         val smallEnoughForTcp = voiceFile.length() <= MAX_VOICE_BASE64_BYTES
         val bytes = if (smallEnoughForTcp) voiceFile.readBytes() else ByteArray(0)
-        val packet = if (smallEnoughForTcp) {
-            VoiceMessagePacket(
-                messageId = messageId, senderId = userPreferences.deviceId,
-                senderName = userPreferences.displayName, recipientId = groupId,
-                audioBase64 = android.util.Base64.encodeToString(bytes, android.util.Base64.NO_WRAP),
-                durationSeconds = durationSeconds, isGroup = true,
-                groupId = groupId, groupName = groupName,
-                isDeveloper = userPreferences.isDeveloper, timestamp = entity.timestamp,
-                signatureBase64 = EncryptionManager.getPairwiseManager()?.signData(bytes)
-            )
-        } else null
+        val audioBase64 = if (smallEnoughForTcp) {
+            android.util.Base64.encodeToString(bytes, android.util.Base64.NO_WRAP)
+        } else ""
 
         val delivered = fanOutToGroup(contacts) { peer ->
             // Nearby بحدّ الـ BYTES payload بحوالي 32KB، فأي تسجيل بيتسلّم عبر
@@ -1591,7 +1681,27 @@ private val replayGuard: ReplayGuard by lazy { ReplayGuard(database.seenIdDao())
                     targetPeerId = peer.deviceId
                 )
             } else {
-                sendPacketDirect(peer.ipAddress, peer.tcpPort, packet!!)
+                // Phase 1.3: the signed field set holds the recipient and the
+                // counter, so each leg of a group send is signed separately.
+                val signed = signForRecipient(
+                    recipientId = peer.deviceId,
+                    messageId = messageId,
+                    timestamp = entity.timestamp,
+                    content = audioBase64.toByteArray(Charsets.UTF_8),
+                ) ?: return@fanOutToGroup false
+                sendPacketDirect(
+                    peer.ipAddress, peer.tcpPort,
+                    VoiceMessagePacket(
+                        messageId = messageId, senderId = userPreferences.deviceId,
+                        senderName = userPreferences.displayName, recipientId = groupId,
+                        audioBase64 = audioBase64,
+                        durationSeconds = durationSeconds, isGroup = true,
+                        groupId = groupId, groupName = groupName,
+                        isDeveloper = userPreferences.isDeveloper, timestamp = entity.timestamp,
+                        signatureBase64 = signed.second, counter = signed.first
+                    ),
+                    peer.deviceId,
+                )
             }
         }
 
@@ -1665,6 +1775,76 @@ private val replayGuard: ReplayGuard by lazy { ReplayGuard(database.seenIdDao())
             )
         }
         transport
+    }
+
+    /**
+     * Phase 1.3: says in the conversation that a peer is too old to talk to.
+     *
+     * The design is explicit that an old client is never dropped silently, so the
+     * refusal has to leave a trace the user can act on. The row id is stable and
+     * the insert replaces, so repeated attempts from the same peer refresh one
+     * notice instead of filling the conversation with them.
+     */
+    private suspend fun notePeerNeedsUpdate(
+        senderId: String,
+        claimedRecipientId: String,
+        displayName: String?,
+    ) {
+        val name = displayName?.takeIf { it.isNotBlank() } ?: senderId
+        val conversationId = if (claimedRecipientId == userPreferences.deviceId) {
+            senderId
+        } else {
+            senderId
+        }
+        database.chatMessageDao().insertMessage(
+            ChatMessageEntity(
+                id = "sys_update_${senderId.take(48)}",
+                conversationId = conversationId,
+                senderId = senderId,
+                senderName = name,
+                recipientId = userPreferences.deviceId,
+                text = context.getString(
+                    R.string.system_peer_needs_update, name
+                ),
+                isPhoto = false,
+                timestamp = System.currentTimeMillis(),
+                receivedAt = System.currentTimeMillis(),
+                isFromMe = false,
+                status = MessageStatus.DELIVERED,
+            )
+        )
+    }
+
+    /**
+     * Phase 1.3: claims the next counter for [recipientId] and signs the message
+     * with it.
+     *
+     * The signature has to cover the counter, or a counter can be stripped and
+     * rewritten to look like a fresh message. Claiming and signing happen together
+     * so a message can never go out with a counter nobody recorded.
+     *
+     * Returns null when no counter could be claimed or no signature produced, in
+     * which case the caller must not send: 1.2 already established that a message
+     * which cannot be protected is not sent.
+     */
+    private suspend fun signForRecipient(
+        recipientId: String,
+        messageId: String,
+        timestamp: Long,
+        content: ByteArray,
+    ): Pair<Long, String?>? {
+        val counter = messageCounters.claimOutgoing(recipientId) ?: return null
+        val signature = MessageSigningPayload.sign(
+            MessageSigningPayload.Fields(
+                senderId = userPreferences.deviceId,
+                recipientId = recipientId,
+                messageId = messageId,
+                timestamp = timestamp,
+                counter = counter,
+                contentDigestHex = MessageSigningPayload.digestHex(content),
+            )
+        ) ?: return null
+        return counter to signature
     }
 
     /** Returns true when the packet reached the peer over direct LAN TCP. */

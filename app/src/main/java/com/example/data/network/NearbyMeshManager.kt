@@ -1190,7 +1190,8 @@ class NearbyMeshManager(
                                 peer.publicKeyBase64, packet.text.toByteArray(Charsets.UTF_8), packet.signatureBase64
                             ) ?: false
                             if (!valid) {
-                                Log.w(TAG, "Security Alert: Signature mismatch for mesh text from ${packet.senderId}")
+                                Log.w(TAG, "Refusing mesh text ${packet.messageId}: signature does not verify")
+                                return@launch
                             }
                         }
                     }

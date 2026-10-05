@@ -9,4 +9,5 @@
     <string name="status_read">Read</string>
     <string name="status_failed">Not delivered</string>
     <string name="action_retry_send">Try again</string>
+    <string name="system_peer_needs_update">%1$s is running an older version of LAN Chat. Messages from this device cannot be verified until they update. Your messages will not reach them either.</string>
 </resources>

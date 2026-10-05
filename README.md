@@ -140,10 +140,19 @@ is implemented and what is not. Nothing below is aspirational.
   `stream`, and `audio`. Compromising one channel key does not reveal any other.
 - **Authenticated encryption.** Every payload is encrypted with
   **AES-256-GCM** (`AES/GCM/NoPadding`).
-- **Replay protection.** Two layers. A per-session in-memory set of seen nonces,
-  and a durable on-disk record of every accepted inbound message id, kept for
-  thirty days. Both are consulted before a message is processed. See the
+- **Replay protection.** Three layers. A per-session in-memory set of seen
+  nonces; a durable on-disk record of every accepted inbound message id, kept for
+  thirty days; and a per-peer monotonic counter with a persisted high-water mark
+  and a 64-frame tolerance for reordering, because mesh delivery does not arrive
+  in order. All three are consulted before a message is processed. See the
   limitations below for what this does not cover.
+- **Signatures that bind the whole message.** Every message signature commits to
+  the sender, the recipient, the message id, the timestamp, a monotonic counter,
+  and a SHA-256 digest of the content, under a `LanChat-msg-v2` domain prefix.
+  A signature therefore cannot be lifted off one message and presented on
+  another, and it cannot be replayed at a different point in the sender's
+  sequence. Signatures are **enforced**: a packet with a missing signature, a bad
+  signature, or a sender we hold no key for is refused, not delivered.
 
 ### Known limitations (read this before relying on it)
 
@@ -168,10 +177,18 @@ The following are real, known gaps:
   refusing new messages until the session is re-established. Finally, voice
   frames use their own per-call sequence guard, which protects ordering within a
   call but not across calls.
-- **No message counter on the wire.** Replay defence keys on the message id
-  because message packets carry no sequence number. A monotonic counter with a
-  sliding high-water mark, as the design calls for, arrives with the step that
-  introduces a protocol version.
+- **Peers must both be on protocol version 2 or newer.** An older peer cannot be
+  talked to, because its packets sign only the message text. The refusal is never
+  silent: a system message appears in the conversation saying the peer needs to
+  update. Mixed-version deployments will not exchange messages until both sides
+  are current.
+- **Photo, video and file packets are not yet signature-enforced.** Text and voice
+  messages go through the full verification path. The larger media paths still
+  carry a signature, but only the text and mesh-text paths refuse a packet that
+  fails it. Extending enforcement to them is outstanding.
+- **`EncryptionManager` holds a process-wide static identity manager.** That is
+  correct for a single Android process, but it means tests must not sign through
+  it when they intend to verify against a specific key.
 - **A contact without a public key cannot be messaged.** Pairing exchanges public
   keys, and a send needs the recipient's key to derive a shared secret. A contact
   row that has never completed pairing has no key, so sends to it are refused.
@@ -286,7 +303,7 @@ per clone with:
 git config core.hooksPath scripts/hooks
 ```
 
-Current state: **246 unit tests, 0 failures**, lint clean.
+Current state: **279 unit tests, 0 failures**, lint clean.
 
 ---
 

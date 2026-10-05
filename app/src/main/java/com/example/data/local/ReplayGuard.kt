@@ -24,6 +24,10 @@ class ReplayGuard(private val dao: SeenIdDao) {
         const val RETENTION_MS = 30L * 24 * 60 * 60 * 1000
     }
 
+    /** Whether this message id is already recorded, without recording anything. */
+    suspend fun wasRecorded(senderId: String, messageId: String): Boolean =
+        dao.wasSeen(senderId, messageId)
+
     /**
      * Records an inbound message id, returning false when it has been seen
      * inside the retention window. A concurrent double delivery is resolved by

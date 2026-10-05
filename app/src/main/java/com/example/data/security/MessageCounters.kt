@@ -20,6 +20,19 @@ class MessageCounters(
     private val window: Long = ReplayWindow.DEFAULT_WINDOW,
 ) {
 
+    /** The highest counter accepted so far from this peer, or zero. */
+    suspend fun highWaterMarkOf(peerDeviceId: String): Long =
+        dao.highWaterMark(peerDeviceId) ?: 0L
+
+    /**
+     * Moves the mark forward after a packet has been authenticated. Never moves
+     * it backwards, so a late packet cannot rewind it.
+     */
+    suspend fun raiseHighWaterMark(peerDeviceId: String, counter: Long) {
+        dao.insertIfAbsent(PeerCounterEntity(peerDeviceId = peerDeviceId))
+        dao.raiseHighWaterMark(peerDeviceId, counter)
+    }
+
     /** Returns the next outgoing counter for [peerDeviceId], or null if unavailable. */
     suspend fun claimOutgoing(peerDeviceId: String): Long? {
         dao.insertIfAbsent(PeerCounterEntity(peerDeviceId = peerDeviceId))

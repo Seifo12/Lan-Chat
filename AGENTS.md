@@ -98,5 +98,16 @@ sliding high-water mark from the design is not implemented. See the security
 section of `README.md` for the authoritative list of gaps, and do not let a
 change quietly contradict it.
 
+- **One coherent change per commit.** Phase 1.3 needed three commits to stay
+  reviewable: the signing surface, then the counters, then the wire format and
+  enforcement. Do not squash a phase into one commit if it hides a broken
+  intermediate state.
+- **If the send and receive halves of a protocol disagree, nothing throws.** During
+  1.3 the receive path was switched to demand a signature over the whole field set
+  while the send path still signed the text alone. The app compiled, every test
+  that did not exercise both halves passed, and every message was refused at
+  runtime. `SignedMessageRoundTripTest` exists so that cannot happen unnoticed
+  again; keep it green.
+
 Phase scope and order live in `docs/PHASE1-DESIGN.md`. Do not restate or
 renumber the phases here; reference that document instead.

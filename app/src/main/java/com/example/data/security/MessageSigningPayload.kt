@@ -52,6 +52,14 @@ object MessageSigningPayload {
         EncryptionManager.getPairwiseManager()
             ?.signData(build(fields).toByteArray(Charsets.UTF_8))
 
+    /**
+     * Signs with a specific identity rather than the global one. Used by tests to
+     * produce a well-formed packet from the wrong key, which is the shape an
+     * impersonating peer would send.
+     */
+    fun signWith(manager: PairwiseSessionManager, fields: Fields): String? =
+        manager.signData(build(fields).toByteArray(Charsets.UTF_8))
+
     fun verify(peerPublicKeyBase64: String, fields: Fields, signatureBase64: String): Boolean =
         EncryptionManager.getPairwiseManager()
             ?.verifySignature(

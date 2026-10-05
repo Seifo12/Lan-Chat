@@ -148,6 +148,14 @@ class PairwiseSessionManager(private val context: Context) {
     /**
      * حساب كود أمان موحد (Safety Number) لمطابقته بين الطرفين لمنع هجمات الوسيط (MITM)
      */
+    /**
+     * The public key we hold for a peer, or null if we have never been told one.
+     * Phase 1.3 needs this to decide an inbound packet is verifiable at all: with
+     * no key there is nothing to check a signature against, so the packet has to
+     * be refused rather than assumed genuine.
+     */
+    fun peerPublicKeyFor(peerDeviceId: String): String? = peerPublicKeysCache[peerDeviceId]
+
     fun getCombinedFingerprint(peerDeviceId: String): String? {
         val peerPub = peerPublicKeysCache[peerDeviceId] ?: return null
         val myPub = getMyPublicKeyBase64()

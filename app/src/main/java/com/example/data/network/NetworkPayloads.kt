@@ -87,7 +87,9 @@ sealed class NetworkPacket(val type: PacketType) {
                         groupName = optLimited(obj, "groupName", MAX_GROUP_NAME_LENGTH),
                         isDeveloper = obj.optBoolean("isDeveloper", false),
                         timestamp = obj.optLong("timestamp", System.currentTimeMillis()),
-                        signatureBase64 = optLimited(obj, "signatureBase64", 512)
+                        signatureBase64 = optLimited(obj, "signatureBase64", 512),
+                        counter = obj.optLong("counter", 0),
+                        protocolVersion = obj.optInt("protocolVersion", 1)
                     )
                     PacketType.PHOTO_MESSAGE -> PhotoMessagePacket(
                         messageId = limitStr(obj.getString("messageId"), MAX_ID_LENGTH),
@@ -103,7 +105,9 @@ sealed class NetworkPacket(val type: PacketType) {
                         groupName = optLimited(obj, "groupName", MAX_GROUP_NAME_LENGTH),
                         isDeveloper = obj.optBoolean("isDeveloper", false),
                         timestamp = obj.optLong("timestamp", System.currentTimeMillis()),
-                        signatureBase64 = optLimited(obj, "signatureBase64", 512)
+                        signatureBase64 = optLimited(obj, "signatureBase64", 512),
+                        counter = obj.optLong("counter", 0),
+                        protocolVersion = obj.optInt("protocolVersion", 1)
                     )
                     PacketType.VIDEO_MESSAGE -> VideoMessagePacket(
                         messageId = limitStr(obj.getString("messageId"), MAX_ID_LENGTH),
@@ -120,7 +124,9 @@ sealed class NetworkPacket(val type: PacketType) {
                         groupName = optLimited(obj, "groupName", MAX_GROUP_NAME_LENGTH),
                         isDeveloper = obj.optBoolean("isDeveloper", false),
                         timestamp = obj.optLong("timestamp", System.currentTimeMillis()),
-                        signatureBase64 = optLimited(obj, "signatureBase64", 512)
+                        signatureBase64 = optLimited(obj, "signatureBase64", 512),
+                        counter = obj.optLong("counter", 0),
+                        protocolVersion = obj.optInt("protocolVersion", 1)
                     )
                     PacketType.FILE_MESSAGE -> FileMessagePacket(
                         messageId = limitStr(obj.getString("messageId"), MAX_ID_LENGTH),
@@ -137,7 +143,9 @@ sealed class NetworkPacket(val type: PacketType) {
                         groupName = optLimited(obj, "groupName", MAX_GROUP_NAME_LENGTH),
                         isDeveloper = obj.optBoolean("isDeveloper", false),
                         timestamp = obj.optLong("timestamp", System.currentTimeMillis()),
-                        signatureBase64 = optLimited(obj, "signatureBase64", 512)
+                        signatureBase64 = optLimited(obj, "signatureBase64", 512),
+                        counter = obj.optLong("counter", 0),
+                        protocolVersion = obj.optInt("protocolVersion", 1)
                     )
                     PacketType.VOICE_MESSAGE -> VoiceMessagePacket(
                         messageId = limitStr(obj.getString("messageId"), MAX_ID_LENGTH),
@@ -151,7 +159,9 @@ sealed class NetworkPacket(val type: PacketType) {
                         groupName = optLimited(obj, "groupName", MAX_GROUP_NAME_LENGTH),
                         isDeveloper = obj.optBoolean("isDeveloper", false),
                         timestamp = obj.optLong("timestamp", System.currentTimeMillis()),
-                        signatureBase64 = optLimited(obj, "signatureBase64", 512)
+                        signatureBase64 = optLimited(obj, "signatureBase64", 512),
+                        counter = obj.optLong("counter", 0),
+                        protocolVersion = obj.optInt("protocolVersion", 1)
                     )
                     PacketType.ACK_DELIVERED -> AckDeliveredPacket(
                         messageId = limitStr(obj.getString("messageId"), MAX_ID_LENGTH),
@@ -304,7 +314,9 @@ data class TextMessagePacket(
     val recipientId: String, val text: String, val isGroup: Boolean = false,
     val groupId: String? = null, val groupName: String? = null,
     val isDeveloper: Boolean = false, val timestamp: Long = System.currentTimeMillis(),
-    val signatureBase64: String? = null
+    val signatureBase64: String? = null,
+        val counter: Long = 0,
+        val protocolVersion: Int = ProtocolVersion.CURRENT
 ) : NetworkPacket(PacketType.TEXT_MESSAGE) {
     override fun toJson(): String {
         val obj = JSONObject()
@@ -316,6 +328,8 @@ data class TextMessagePacket(
         if (groupName != null) obj.put("groupName", groupName)
         obj.put("isDeveloper", isDeveloper); obj.put("timestamp", timestamp)
         if (signatureBase64 != null) obj.put("signatureBase64", signatureBase64)
+        obj.put("counter", counter)
+        obj.put("protocolVersion", protocolVersion)
         return obj.toString()
     }
 }
@@ -327,7 +341,9 @@ data class PhotoMessagePacket(
     val isGroup: Boolean = false, val groupId: String? = null,
     val groupName: String? = null, val isDeveloper: Boolean = false,
     val timestamp: Long = System.currentTimeMillis(),
-    val signatureBase64: String? = null
+    val signatureBase64: String? = null,
+        val counter: Long = 0,
+        val protocolVersion: Int = ProtocolVersion.CURRENT
 ) : NetworkPacket(PacketType.PHOTO_MESSAGE) {
     override fun toJson(): String {
         val obj = JSONObject()
@@ -340,6 +356,8 @@ data class PhotoMessagePacket(
         if (groupName != null) obj.put("groupName", groupName)
         obj.put("isDeveloper", isDeveloper); obj.put("timestamp", timestamp)
         if (signatureBase64 != null) obj.put("signatureBase64", signatureBase64)
+        obj.put("counter", counter)
+        obj.put("protocolVersion", protocolVersion)
         return obj.toString()
     }
 }
@@ -351,7 +369,9 @@ data class VideoMessagePacket(
     val isGroup: Boolean = false, val groupId: String? = null,
     val groupName: String? = null, val isDeveloper: Boolean = false,
     val timestamp: Long = System.currentTimeMillis(),
-    val signatureBase64: String? = null
+    val signatureBase64: String? = null,
+        val counter: Long = 0,
+        val protocolVersion: Int = ProtocolVersion.CURRENT
 ) : NetworkPacket(PacketType.VIDEO_MESSAGE) {
     override fun toJson(): String {
         val obj = JSONObject()
@@ -365,6 +385,8 @@ data class VideoMessagePacket(
         if (groupName != null) obj.put("groupName", groupName)
         obj.put("isDeveloper", isDeveloper); obj.put("timestamp", timestamp)
         if (signatureBase64 != null) obj.put("signatureBase64", signatureBase64)
+        obj.put("counter", counter)
+        obj.put("protocolVersion", protocolVersion)
         return obj.toString()
     }
 }
@@ -376,7 +398,9 @@ data class FileMessagePacket(
     val isGroup: Boolean = false, val groupId: String? = null,
     val groupName: String? = null, val isDeveloper: Boolean = false,
     val timestamp: Long = System.currentTimeMillis(),
-    val signatureBase64: String? = null
+    val signatureBase64: String? = null,
+        val counter: Long = 0,
+        val protocolVersion: Int = ProtocolVersion.CURRENT
 ) : NetworkPacket(PacketType.FILE_MESSAGE) {
     override fun toJson(): String {
         val obj = JSONObject()
@@ -390,6 +414,8 @@ data class FileMessagePacket(
         if (groupName != null) obj.put("groupName", groupName)
         obj.put("isDeveloper", isDeveloper); obj.put("timestamp", timestamp)
         if (signatureBase64 != null) obj.put("signatureBase64", signatureBase64)
+        obj.put("counter", counter)
+        obj.put("protocolVersion", protocolVersion)
         return obj.toString()
     }
 }
@@ -400,7 +426,9 @@ data class VoiceMessagePacket(
     val isGroup: Boolean = false, val groupId: String? = null,
     val groupName: String? = null, val isDeveloper: Boolean = false,
     val timestamp: Long = System.currentTimeMillis(),
-    val signatureBase64: String? = null
+    val signatureBase64: String? = null,
+        val counter: Long = 0,
+        val protocolVersion: Int = ProtocolVersion.CURRENT
 ) : NetworkPacket(PacketType.VOICE_MESSAGE) {
     override fun toJson(): String {
         val obj = JSONObject()
@@ -412,6 +440,8 @@ data class VoiceMessagePacket(
         if (groupName != null) obj.put("groupName", groupName)
         obj.put("isDeveloper", isDeveloper); obj.put("timestamp", timestamp)
         if (signatureBase64 != null) obj.put("signatureBase64", signatureBase64)
+        obj.put("counter", counter)
+        obj.put("protocolVersion", protocolVersion)
         return obj.toString()
     }
 }

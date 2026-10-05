@@ -7,4 +7,5 @@
     <string name="status_read">تمت القراءة</string>
     <string name="status_failed">لم يتم الإرسال</string>
     <string name="action_retry_send">إعادة المحاولة</string>
+    <string name="system_peer_needs_update">%1$s يشغّل نسخة أقدم من LAN Chat. لا يمكن التحقق من رسائل هذا الجهاز حتى يحدّث التطبيق. ورسائلك لن تصل إليه أيضًا.</string>
 </resources>
