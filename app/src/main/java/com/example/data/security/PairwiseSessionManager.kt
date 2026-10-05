@@ -336,11 +336,17 @@ class PairwiseSessionManager(private val context: Context) {
                         return null
                     }
                     if (session.seenNonces.size >= MAX_SEEN_NONCES_PER_SESSION) {
-                        val it = session.seenNonces.iterator()
-                        if (it.hasNext()) {
-                            it.next()
-                            it.remove()
-                        }
+                        // Phase 1.5: IGNORE rather than REPLACE. This used to evict
+                        // the oldest nonce to make room, which is backwards: the
+                        // entries discarded are the oldest captures, which is
+                        // precisely what someone replaying recorded traffic sends
+                        // back. Filling the window unlocked the oldest messages.
+                        // Once the window is full this session can no longer tell a
+                        // new message from an old replay, so the honest answer is to
+                        // drop the new message and keep the window intact.
+                        Log.w(TAG, "Seen-nonce window full for this session, dropping " +
+                            "message rather than evicting a nonce; a new session is needed")
+                        return null
                     }
                     session.seenNonces.add(nonce)
                 }

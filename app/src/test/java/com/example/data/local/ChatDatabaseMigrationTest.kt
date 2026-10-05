@@ -79,6 +79,7 @@ class ChatDatabaseMigrationTest {
                 ChatDatabase.MIGRATION_6_7,
                 ChatDatabase.MIGRATION_7_8,
                 ChatDatabase.MIGRATION_8_9,
+        ChatDatabase.MIGRATION_9_10,
             )
             .allowMainThreadQueries()
             .build()
@@ -100,7 +101,9 @@ class ChatDatabaseMigrationTest {
         val database = openWithRoom(file)
         val dao = database.chatMessageDao()
 
-        assertEquals(9, database.openHelper.readableDatabase.version)
+        // The current schema version, not a literal: this test is about the
+    // migration that ran, not about which number the version happens to be.
+    assertEquals(ChatDatabase.SCHEMA_VERSION, database.openHelper.readableDatabase.version)
         assertEquals(1_000L, dao.getMessageById("old_a")?.receivedAt)
         assertEquals(2_000L, dao.getMessageById("old_b")?.receivedAt)
         assertEquals(

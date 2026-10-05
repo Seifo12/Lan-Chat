@@ -6,6 +6,7 @@ import com.example.data.call.LanAudioCallManager
 import com.example.data.local.ChatDatabase
 import com.example.data.local.StaleSendingSweep
 import com.example.data.local.MessageStatus
+import com.example.data.local.ReplayGuard
 import com.example.data.local.UserPreferences
 import com.example.data.network.AudioPlayerHelper
 import com.example.data.network.AudioRecorderHelper
@@ -92,6 +93,10 @@ class LanChatApplication : Application() {
         applicationScope.launch {
             runCatching { sweepStaleSendingMessages() }
                 .onFailure { Log.e(TAG, "Stale SENDING sweep failed: ${it.message}") }
+            // Phase 1.5: drop replay records that have aged past the retention
+            // window, so the table cannot grow without bound.
+            runCatching { ReplayGuard(database.seenIdDao()).purgeExpired() }
+                .onFailure { Log.e(TAG, "Replay record purge failed: ${it.message}") }
         }
 
         // 5. Connect Network Listeners Across Engines

@@ -84,6 +84,7 @@ class ChatDatabaseMeshEndpointMigrationTest {
                 ChatDatabase.MIGRATION_6_7,
                 ChatDatabase.MIGRATION_7_8,
                 ChatDatabase.MIGRATION_8_9,
+        ChatDatabase.MIGRATION_9_10,
             )
             .allowMainThreadQueries()
             .build()
@@ -110,7 +111,9 @@ class ChatDatabaseMeshEndpointMigrationTest {
 
         val database = openWithRoom(file)
 
-        assertEquals(9, database.openHelper.readableDatabase.version)
+        // The current schema version, not a literal: this test is about the
+    // migration that ran, not about which number the version happens to be.
+    assertEquals(ChatDatabase.SCHEMA_VERSION, database.openHelper.readableDatabase.version)
         val contact = contactById(database, "mesh_peer")
         assertEquals("AB12CD34", contact?.meshEndpointId)
     }

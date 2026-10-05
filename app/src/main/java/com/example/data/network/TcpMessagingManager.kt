@@ -7,6 +7,7 @@ import com.example.data.local.ChatMessageEntity
 import com.example.data.local.ContactEntity
 import com.example.data.local.GroupEntity
 import com.example.data.local.MessageStatus
+import com.example.data.local.ReplayGuard
 import com.example.data.local.UserPreferences
 import com.example.data.security.EncryptionManager
 import com.example.service.LanNotificationHelper
@@ -74,6 +75,13 @@ class TcpMessagingManager(
  * and the startup sweep moves any leftover SENDING row to QUEUED.
  */
 private val inFlightSends = ConcurrentHashMap.newKeySet<String>()
+
+/**
+ * Phase 1.5 durable replay protection. The in-memory nonce set cannot answer
+ * "have I seen this before?" after a restart, so inbound message ids are also
+ * recorded on disk for the retention window.
+ */
+private val replayGuard: ReplayGuard by lazy { ReplayGuard(database.seenIdDao()) }
     private var serverSocket: ServerSocket? = null
     private val activeConversationId = AtomicReference<String?>(null)
     private val connectionSemaphore = Semaphore(MAX_CONCURRENT_CONNECTIONS)
@@ -577,6 +585,16 @@ private val inFlightSends = ConcurrentHashMap.newKeySet<String>()
                 callPacketListener?.invoke(packet, senderIp)
             }
             is TextMessagePacket -> {
+                // Phase 1.5: a message id already recorded inside the retention
+                // window is a replay. This is checked before any processing, and
+                // the record deliberately outlives the conversation so deleting a
+                // chat does not hand an attacker a clean slate.
+                if (!replayGuard.tryAccept(packet.senderId, packet.messageId)) {
+                    Log.w(TAG, "Dropping replayed message ${packet.messageId} " +
+                        "from ${packet.senderId}")
+                    return
+                }
+
                 if (packet.signatureBase64 != null) {
                     val peer = database.contactDao().getContactById(packet.senderId)
                     if (peer?.publicKeyBase64 != null) {

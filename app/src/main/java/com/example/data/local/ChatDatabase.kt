@@ -12,19 +12,28 @@ import androidx.sqlite.db.SupportSQLiteDatabase
         ChatMessageEntity::class,
         ContactEntity::class,
         GroupEntity::class,
-        DiscoveredPeerEntity::class
+        DiscoveredPeerEntity::class,
+        SeenIdEntity::class
     ],
-    version = 9,
+    version = 10,
     exportSchema = true
 )
 abstract class ChatDatabase : RoomDatabase() {
 
     abstract fun chatMessageDao(): ChatMessageDao
     abstract fun contactDao(): ContactDao
+
+    abstract fun seenIdDao(): SeenIdDao
     abstract fun groupDao(): GroupDao
     abstract fun discoveredPeerDao(): DiscoveredPeerDao
 
     companion object {
+        /**
+         * The single source of truth for the schema version, so tests and tooling
+         * never hardcode a second copy of the number that @Database declares.
+         */
+        const val SCHEMA_VERSION = 10
+
         @Volatile
         private var INSTANCE: ChatDatabase? = null
 
@@ -80,13 +89,36 @@ abstract class ChatDatabase : RoomDatabase() {
             }
         }
 
+        /**
+         * Phase 1.5: durable replay records. A new table rather than a column,
+         * because a record has to outlive the conversation it came from. No
+         * foreign key, so deleting a chat cannot clear the evidence.
+         */
+        val MIGRATION_9_10 = object : Migration(9, 10) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL(
+                    "CREATE TABLE IF NOT EXISTS `seen_ids` (" +
+                        "`senderId` TEXT NOT NULL, " +
+                        "`messageId` TEXT NOT NULL, " +
+                        "`receivedAt` INTEGER NOT NULL, " +
+                        "PRIMARY KEY(`senderId`, `messageId`))"
+                )
+                db.execSQL(
+                    "CREATE INDEX IF NOT EXISTS `index_seen_ids_receivedAt` " +
+                        "ON `seen_ids` (`receivedAt`)"
+                )
+            }
+        }
+
         fun getDatabase(context: Context): ChatDatabase {
             return INSTANCE ?: synchronized(this) {
                 val instance = Room.databaseBuilder(
                     context.applicationContext,
                     ChatDatabase::class.java,
                     "lan_chat_database"
-                ).addMigrations(MIGRATION_5_6, MIGRATION_6_7, MIGRATION_7_8, MIGRATION_8_9)
+                ).addMigrations(
+                MIGRATION_5_6, MIGRATION_6_7, MIGRATION_7_8, MIGRATION_8_9, MIGRATION_9_10
+            )
                     .build()
                 INSTANCE = instance
                 instance

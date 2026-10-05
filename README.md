@@ -140,9 +140,10 @@ is implemented and what is not. Nothing below is aspirational.
   `stream`, and `audio`. Compromising one channel key does not reveal any other.
 - **Authenticated encryption.** Every payload is encrypted with
   **AES-256-GCM** (`AES/GCM/NoPadding`).
-- **Replay protection, in memory only.** Received nonces are held in a per-session
-  set and a repeated nonce is rejected. See the limitation below for how little
-  this is worth.
+- **Replay protection.** Two layers. A per-session in-memory set of seen nonces,
+  and a durable on-disk record of every accepted inbound message id, kept for
+  thirty days. Both are consulted before a message is processed. See the
+  limitations below for what this does not cover.
 
 ### Known limitations (read this before relying on it)
 
@@ -157,12 +158,20 @@ The following are real, known gaps:
   private key is written to disk as PKCS#8 bytes. Key material is therefore
   recoverable from a device backup, a rooted filesystem, or a compromise of the
   AES wrapping key.
-- **Replay protection is not durable.** The seen-nonce set lives only in RAM for
-  the lifetime of a session, holds at most 1000 nonces and evicts the oldest
-  beyond that, and is discarded entirely whenever a session is re-established,
-  which happens automatically after the 30-day session age limit. A restart or a
-  re-establishment therefore replays cleanly. Do not rely on replay protection
-  across restarts.
+- **Replay protection is bounded, and does not cover voice.** Three gaps remain.
+  The in-memory nonce set is discarded whenever a session is re-established,
+  which happens automatically past the 30-day session age limit, so after that
+  only the durable message-id record is protecting you, and that only remembers
+  ids for thirty days. A capture older than that can be replayed. Separately,
+  the nonce window holds 1000 entries per session and now **drops** messages
+  rather than evicting when full, so a very long-lived session eventually starts
+  refusing new messages until the session is re-established. Finally, voice
+  frames use their own per-call sequence guard, which protects ordering within a
+  call but not across calls.
+- **No message counter on the wire.** Replay defence keys on the message id
+  because message packets carry no sequence number. A monotonic counter with a
+  sliding high-water mark, as the design calls for, arrives with the step that
+  introduces a protocol version.
 - **A contact without a public key cannot be messaged.** Pairing exchanges public
   keys, and a send needs the recipient's key to derive a shared secret. A contact
   row that has never completed pairing has no key, so sends to it are refused.
@@ -277,7 +286,7 @@ per clone with:
 git config core.hooksPath scripts/hooks
 ```
 
-Current state: **215 unit tests, 0 failures**, lint clean.
+Current state: **246 unit tests, 0 failures**, lint clean.
 
 ---
 

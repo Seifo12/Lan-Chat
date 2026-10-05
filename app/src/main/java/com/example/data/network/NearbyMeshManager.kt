@@ -6,6 +6,7 @@ import com.example.data.local.ChatDatabase
 import com.example.data.local.ChatMessageEntity
 import com.example.data.local.ContactEntity
 import com.example.data.local.MessageStatus
+import com.example.data.local.ReplayGuard
 import com.example.data.local.UserPreferences
 import com.example.data.security.EncryptionManager
 
@@ -86,6 +87,13 @@ class NearbyMeshManager(
     }
 
     private val scope = CoroutineScope(Dispatchers.IO + SupervisorJob())
+
+    /**
+     * Phase 1.5 durable replay protection, shared with the direct LAN path so a
+     * packet replayed through the mesh is refused exactly as one replayed over
+     * TCP would be.
+     */
+    private val replayGuard: ReplayGuard by lazy { ReplayGuard(database.seenIdDao()) }
 
     private val connectionsClient: ConnectionsClient by lazy {
         Nearby.getConnectionsClient(context.applicationContext)
@@ -1090,7 +1098,16 @@ class NearbyMeshManager(
         return true
     }
 
+    /**
+     * Entry point used by the TCP manager's listener, which is not a coroutine.
+     * The work is launched into this manager's own scope so the replay guard can
+     * consult the database before the packet is processed.
+     */
     fun handleIncomingMeshPacket(packet: MeshRelayPacket, senderIp: String) {
+        scope.launch { handleIncomingMeshPacketInternal(packet, senderIp) }
+    }
+
+    private suspend fun handleIncomingMeshPacketInternal(packet: MeshRelayPacket, senderIp: String) {
         if (!userPreferences.isMeshModeEnabled) return
         if (isPacketSeen(packet.meshPacketId)) return
         markPacketSeen(packet.meshPacketId)
@@ -1152,7 +1169,17 @@ class NearbyMeshManager(
         }
     }
 
-    private fun processInnerMeshPacket(packet: NetworkPacket, senderId: String, senderName: String) {
+    private suspend fun processInnerMeshPacket(packet: NetworkPacket, senderId: String, senderName: String) {
+        // Phase 1.5: the same durable replay record the direct LAN path uses, so a
+        // relayed packet cannot be replayed through the mesh instead.
+        if (packet is TextMessagePacket &&
+            !replayGuard.tryAccept(packet.senderId, packet.messageId)
+        ) {
+            Log.w(TAG, "Dropping replayed mesh message ${packet.messageId} " +
+                "from ${packet.senderId}")
+            return
+        }
+
         scope.launch {
             when (packet) {
                 is TextMessagePacket -> {

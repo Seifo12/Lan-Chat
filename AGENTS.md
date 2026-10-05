@@ -79,16 +79,24 @@ explicitly, and point at the phase that will implement it.
 
 `MessageStatus.status` is a `TEXT` column with no `TypeConverter`, so adding an
 enum constant does **not** change the schema. The schema version changes only
-when a column, index, or constraint changes. `MessageStatusSchemaTest` exists to
-prove that, so run it before assuming a migration is needed.
+when a column, index, or constraint changes. `MessageStatusSchemaTest` proves the
+messages table is byte-identical between the exported `9.json` and `10.json`, so
+run it before assuming a migration is needed, and before assuming one is not.
+
+The version lives in `ChatDatabase.SCHEMA_VERSION`. Reference that constant
+rather than writing the number again. When a migration is added, append it to
+every test that hands Room an explicit migration list, and to
+`ChatDatabase.addMigrations`.
 
 ## Current state
 
 Security work is **not finished**. Silent encryption fallbacks are removed in
 Phase 1.2 and transport trust in 1.10, and neither is done. The identity key is a
-serialised software EC key, not a keystore-held key. Seen-nonce replay protection
-is in-memory only. See the security section of `README.md` for the authoritative
-list of gaps, and do not let a change quietly contradict it.
+serialised software EC key, not a keystore-held key. Replay protection is bounded
+and does not cover voice, and message packets still carry no counter, so the
+sliding high-water mark from the design is not implemented. See the security
+section of `README.md` for the authoritative list of gaps, and do not let a
+change quietly contradict it.
 
 Phase scope and order live in `docs/PHASE1-DESIGN.md`. Do not restate or
 renumber the phases here; reference that document instead.
