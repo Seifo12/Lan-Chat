@@ -197,10 +197,11 @@ The following are real, known gaps:
   identity yet. A network attacker in radio range is not defended against
   impersonation today. Mutual TLS with a pinned peer identity is planned; see the
   design document for its phase.
-- **`decryptAny` still exists.** A generic decrypt helper will try every session
-  key the device holds, so it is not bound to a specific peer. The peer-addressed
-  decrypt path no longer uses it, but the generic helper remains until the phase
-  that removes it. Do not rely on peer binding for anything routed through it.
+- **A relayed packet's claimed origin is not trusted.** The mesh envelope names an
+  origin sender, but a relay never opens the payload it forwards and can rewrite
+  that field to name anyone. The claimed origin is used only as a hint for choosing
+  a key; a wrong hint fails to decrypt and the packet is dropped. Once a payload is
+  open, the sender identity is read from inside it.
 - **No forward secrecy yet.** Session keys are derived from a static identity pair
   and cached, so compromising a device's identity key would allow past traffic to
   be decrypted. Forward secrecy is expected to arrive with the mutual TLS work
@@ -303,7 +304,7 @@ per clone with:
 git config core.hooksPath scripts/hooks
 ```
 
-Current state: **279 unit tests, 0 failures**, lint clean.
+Current state: **284 unit tests, 0 failures**, lint clean.
 
 ---
 
