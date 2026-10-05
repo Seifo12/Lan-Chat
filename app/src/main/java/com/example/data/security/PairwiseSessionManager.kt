@@ -295,17 +295,15 @@ class PairwiseSessionManager(private val context: Context) {
         return decryptWithSession(session, encryptedText)
     }
 
-    fun decryptAny(encryptedText: String): String? {
-        if (!encryptedText.startsWith("PENC:")) return null
-        val now = System.currentTimeMillis()
-        for ((_, session) in activeSessions) {
-            if (now - session.createdAt <= SESSION_MAX_AGE_MS) {
-                val decrypted = decryptWithSession(session, encryptedText)
-                if (decrypted != null) return decrypted
-            }
-        }
-        return null
-    }
+    /**
+     * Phase 1.4 removed the generic any-key decrypt this used to hold.
+     *
+     * It tried every session key the device had, so a payload addressed to one
+     * peer could be opened with another peer's key and nothing about a PENC blob
+     * bound it to its recipient. A payload is now only ever opened with the key of
+     * the peer it names; see [decryptFromPeer]. If that peer is unknown the payload
+     * stays sealed.
+     */
 
     private fun decryptWithSession(session: SessionKeys, encryptedText: String): String? {
         return try {

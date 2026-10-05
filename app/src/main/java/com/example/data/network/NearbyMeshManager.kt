@@ -1126,7 +1126,16 @@ class NearbyMeshManager(
                 // Phase 1.2: as above, drop rather than retry under another key.
                 val innerPacket = decryptedJson?.let { NetworkPacket.fromJson(it) }
                 if (innerPacket != null) {
-                    processInnerMeshPacket(innerPacket, packet.originSenderId, packet.originSenderName)
+                    // Phase 1.4, audit finding C3. The envelope's
+                    // originSenderId is attacker-controlled: a relay never opens
+                    // the payload, so it can be rewritten to name anyone. It was
+                    // safe to use only as a hint for picking a key, because a
+                    // wrong hint fails to decrypt and the packet is dropped. Once
+                    // the payload is open, the authenticated identity is the one
+                    // inside it, so that is what gets used from here on.
+                    val authenticated = innerPacketClaimedSender(innerPacket)
+                        ?: (packet.originSenderId to packet.originSenderName)
+                    processInnerMeshPacket(innerPacket, authenticated.first, authenticated.second)
                 }
             } catch (e: Exception) {
                 Log.e(TAG, "Failed to decrypt mesh payload: ${e.message}")
@@ -1168,6 +1177,21 @@ class NearbyMeshManager(
             } catch (_: Exception) {}
         }
     }
+
+    /**
+     * The sender identity carried inside a decrypted packet, or null when the
+     * packet type does not name a sender. Phase 1.4: this is the authenticated
+     * origin, as opposed to the relay envelope's claim.
+     */
+    private fun innerPacketClaimedSender(packet: NetworkPacket): Pair<String, String>? =
+        when (packet) {
+            is TextMessagePacket -> packet.senderId to packet.senderName
+            is PhotoMessagePacket -> packet.senderId to packet.senderName
+            is VideoMessagePacket -> packet.senderId to packet.senderName
+            is FileMessagePacket -> packet.senderId to packet.senderName
+            is VoiceMessagePacket -> packet.senderId to packet.senderName
+            else -> null
+        }
 
     private suspend fun processInnerMeshPacket(packet: NetworkPacket, senderId: String, senderName: String) {
         // Phase 1.5: the same durable replay record the direct LAN path uses, so a

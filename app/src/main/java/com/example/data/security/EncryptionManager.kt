@@ -131,12 +131,20 @@ object EncryptionManager {
         return "ENC:" + Base64.encodeToString(combined, Base64.NO_WRAP)
     }
 
+    /**
+     * Decrypts device-local material only.
+     *
+     * Phase 1.4: this used to reach for a try-every-key helper for PENC payloads,
+     * which opened a peer's traffic with whichever key happened to work. It no
+     * longer touches pairwise material at all. Opening a payload addressed to a
+     * peer is [PairwiseSessionManager.decryptFromPeer]'s job, and only with that
+     * peer's key.
+     */
     fun decrypt(encryptedText: String): String {
         if (encryptedText.startsWith("PENC:")) {
-            val pairwiseDecrypted = pairwiseSessionManager?.decryptAny(encryptedText)
-            if (pairwiseDecrypted != null) {
-                return pairwiseDecrypted
-            }
+            // A pairwise payload cannot be opened without knowing who it is for,
+            // so it is returned untouched rather than guessed at.
+            return encryptedText
         }
         if (!encryptedText.startsWith("ENC:")) {
             return encryptedText
