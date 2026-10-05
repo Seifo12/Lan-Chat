@@ -388,7 +388,15 @@ private val inFlightSends = ConcurrentHashMap.newKeySet<String>()
         }
 
         val pairwise = EncryptionManager.getPairwiseManager()
-        val streamKey = pairwise?.getStreamKeyForPeer(senderId) ?: EncryptionManager.getLocalStorageKey()
+        // Phase 1.2: fail closed. This used to fall back to the device storage
+        // key, so an incoming file could be written to disk under a key that has
+        // nothing to do with the sender, and the receiver was never told.
+        val streamKey = pairwise?.getStreamKeyForPeer(senderId)
+        if (streamKey == null) {
+            Log.e(TAG, "Refusing inbound transfer from $senderId: no pairwise " +
+                "stream key, so it cannot be decrypted for this sender")
+            return
+        }
 
         val subFolder = when {
             isPhoto -> "chat_photos"
@@ -989,7 +997,7 @@ private val inFlightSends = ConcurrentHashMap.newKeySet<String>()
             signatureBase64 = signature
         )
         val delivered = fanOutToGroup(contacts) { peer ->
-            sendPacketDirect(peer.ipAddress, peer.tcpPort, packet)
+            sendPacketDirect(peer.ipAddress, peer.tcpPort, packet, peer.deviceId)
         }
         if (delivered > 0) {
             if (userPreferences.isHapticEnabled) FeedbackUtils.vibrateMessageSent(context)
@@ -1143,7 +1151,13 @@ private val inFlightSends = ConcurrentHashMap.newKeySet<String>()
                     pairwise.establishSession(actualTargetDevice, contact.publicKeyBase64!!)
                 }
             }
-            val streamKey = pairwise?.getStreamKeyForPeer(actualTargetDevice) ?: EncryptionManager.getLocalStorageKey()
+            // Phase 1.2: fail closed, as on the inbound path.
+            val streamKey = pairwise?.getStreamKeyForPeer(actualTargetDevice)
+            if (streamKey == null) {
+                Log.e(TAG, "Refusing outbound transfer to $actualTargetDevice: no " +
+                    "pairwise stream key, so the file cannot be protected for it")
+                return@withContext false
+            }
 
             val metaObj = JSONObject().apply {
                 put("transferId", transferId)
@@ -1168,7 +1182,13 @@ private val inFlightSends = ConcurrentHashMap.newKeySet<String>()
             }
 
             val plainMeta = metaObj.toString()
-            val encryptedMeta = pairwise?.encryptForPeer(actualTargetDevice, plainMeta) ?: EncryptionManager.encrypt(plainMeta)
+            // Phase 1.2: fail closed.
+            val encryptedMeta = pairwise?.encryptForPeer(actualTargetDevice, plainMeta)
+            if (encryptedMeta == null) {
+                Log.e(TAG, "Refusing outbound transfer to $actualTargetDevice: " +
+                    "transfer metadata could not be protected for it")
+                return@withContext false
+            }
             val metaBytes = encryptedMeta.toByteArray(Charsets.UTF_8)
 
             val rawOut = socket.getOutputStream()
@@ -1565,14 +1585,25 @@ private val inFlightSends = ConcurrentHashMap.newKeySet<String>()
         }
     }
 
-    suspend fun sendPacketDirect(targetIp: String, targetPort: Int, packet: NetworkPacket): Boolean =
-        sendPacketDirectWithTransport(targetIp, targetPort, packet) != SendTransport.FAILED
+    suspend fun sendPacketDirect(
+        targetIp: String,
+        targetPort: Int,
+        packet: NetworkPacket,
+        encryptForPeerId: String? = null
+    ): Boolean = sendPacketDirectWithTransport(
+        targetIp, targetPort, packet, null, encryptForPeerId
+    ) != SendTransport.FAILED
 
     suspend fun sendPacketDirectWithTransport(
         targetIp: String, targetPort: Int, packet: NetworkPacket,
-        meshEndpointId: String? = null
+        meshEndpointId: String? = null,
+        // Phase 1.2: the identity the payload is encrypted for. This is not always
+        // the packet's own recipientId: a group packet carries the group id, so
+        // each fan-out leg needs the individual peer's device id instead.
+        encryptForPeerId: String? = null
     ): SendTransport = withContext(Dispatchers.IO) {
         val recipientId = extractRecipientId(packet)
+        val encryptionPeerId = encryptForPeerId ?: recipientId
 
         // The endpoint id lives on the contact now, so MESH stays available as a
         // fallback even when the peer has a perfectly good LAN address. Resolving
@@ -1596,7 +1627,9 @@ private val inFlightSends = ConcurrentHashMap.newKeySet<String>()
         val transport = sendViaCandidates(candidates) { candidate ->
             when (candidate.transport) {
                 SendTransport.LAN ->
-                    sendOverTcp(candidate.address, candidate.port, packet, recipientId)
+                    sendOverTcp(
+                    candidate.address, candidate.port, packet, recipientId, encryptionPeerId
+                )
                 SendTransport.MESH ->
                     if (recipientId != null) {
                         nearbyFallbackSender?.invoke(recipientId, packet) ?: false
@@ -1618,8 +1651,15 @@ private val inFlightSends = ConcurrentHashMap.newKeySet<String>()
 
     /** Returns true when the packet reached the peer over direct LAN TCP. */
     private suspend fun sendOverTcp(
-        targetIp: String, targetPort: Int, packet: NetworkPacket, recipientId: String?
+        targetIp: String,
+        targetPort: Int,
+        packet: NetworkPacket,
+        recipientId: String?,
+        // Phase 1.2: for a group fan-out leg this is the individual peer, while
+        // recipientId is the group the packet nominally belongs to.
+        encryptForPeerId: String? = null
     ): Boolean {
+        val encryptionPeerId = encryptForPeerId ?: recipientId
         val isCallSignal = packet is CallOfferPacket || packet is CallAnswerPacket ||
                 packet is CallRingingPacket || packet is CallEndPacket
 
@@ -1640,11 +1680,18 @@ private val inFlightSends = ConcurrentHashMap.newKeySet<String>()
             }
 
             val payloadToSend = if (packet is BeaconPacket || packet is BeaconAckPacket) {
+                // Beacons stay readable so discovery keeps working.
                 plainJson
-            } else if (recipientId != null && pairwise?.hasSession(recipientId) == true) {
-                pairwise.encryptForPeer(recipientId, plainJson) ?: EncryptionManager.encrypt(plainJson)
             } else {
-                EncryptionManager.encrypt(plainJson)
+                // Phase 1.2: fail closed. A payload that cannot be protected for
+                // its recipient is not sent at all.
+                val sealed = encryptionPeerId?.let { pairwise?.encryptForPeer(it, plainJson) }
+                if (sealed == null) {
+                    Log.e(TAG, "Refusing mesh payload: no pairwise session for " +
+                        "the recipient, so it cannot be protected")
+                    return false
+                }
+                sealed
             }
 
             val jsonBytes = payloadToSend.toByteArray(Charsets.UTF_8)

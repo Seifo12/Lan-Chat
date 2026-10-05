@@ -41,15 +41,33 @@ class PairwiseSessionManager(private val context: Context) {
     private val activeSessions = ConcurrentHashMap<String, SessionKeys>()
     private val peerPublicKeysCache = ConcurrentHashMap<String, String>()
 
-    private val identityKeyPair: KeyPair by lazy { loadOrGenerateIdentity() }
+    private val identity: IdentityLoad by lazy { loadIdentity() }
 
-    private fun loadOrGenerateIdentity(): KeyPair {
+    private val identityKeyPair: KeyPair
+        get() = when (val loaded = identity) {
+            is IdentityLoad.Available -> loaded.keyPair
+            is IdentityLoad.Refused -> throw IllegalStateException(
+                "LAN Chat identity is unavailable: ${loaded.reason}. The stored " +
+                    "identity could not be loaded, so no new identity was generated. " +
+                    "A new identity would look like a new device to every peer and " +
+                    "silently break every existing session. Encryption and sending are " +
+                    "disabled until this is resolved."
+            )
+        }
+
+    /** Outcome of loading the device identity. A failure is sticky by design. */
+    private sealed interface IdentityLoad {
+        data class Available(val keyPair: KeyPair) : IdentityLoad
+        data class Refused(val reason: String) : IdentityLoad
+    }
+
+    private fun loadIdentity(): IdentityLoad {
         val prefs = context.getSharedPreferences(IDENTITY_PREFS, Context.MODE_PRIVATE)
         val storedEncrypted = prefs.getString("identity_private_enc_v3", null)
         val storedPublic = prefs.getString("identity_public_b64_v3", null)
 
         if (storedEncrypted != null && storedPublic != null) {
-            try {
+            return try {
                 val encryptedBytes = Base64.decode(storedEncrypted, Base64.NO_WRAP)
                 val privBytes = EncryptionManager.decryptBytesOrNull(encryptedBytes)
                     ?: throw IllegalStateException("stored identity failed authentication")
@@ -57,10 +75,14 @@ class PairwiseSessionManager(private val context: Context) {
                 val keyFactory = KeyFactory.getInstance(EC_ALGORITHM)
                 val privateKey = keyFactory.generatePrivate(PKCS8EncodedKeySpec(privBytes))
                 val publicKey = keyFactory.generatePublic(X509EncodedKeySpec(pubBytes))
-                Log.d(TAG, "Loaded existing EC identity keypair from hardware-encrypted storage")
-                return KeyPair(publicKey, privateKey)
+                Log.i(TAG, "Loaded existing EC identity keypair")
+                IdentityLoad.Available(KeyPair(publicKey, privateKey))
             } catch (e: Exception) {
-                Log.w(TAG, "Failed to load identity, regenerating: ${e.message}")
+                // Phase 1.2: this used to log a warning and generate a fresh
+                // identity. Doing so silently republishes the device under a new
+                // key, which peers cannot distinguish from a different device.
+                Log.e(TAG, "Stored identity refused, not regenerating: ${e.message}")
+                IdentityLoad.Refused(e.message ?: e.javaClass.simpleName)
             }
         }
 
@@ -74,7 +96,7 @@ class PairwiseSessionManager(private val context: Context) {
             .putString("identity_public_b64_v3", Base64.encodeToString(keyPair.public.encoded, Base64.NO_WRAP))
             .apply()
         Log.i(TAG, "Generated new EC secp256r1 identity keypair")
-        return keyPair
+        return IdentityLoad.Available(keyPair)
     }
 
     fun getMyPublicKeyBase64(): String {
@@ -256,12 +278,13 @@ class PairwiseSessionManager(private val context: Context) {
 
     fun decryptFromPeer(peerDeviceId: String, encryptedText: String): String? {
         if (!encryptedText.startsWith("PENC:")) return encryptedText
-        val session = getValidSession(peerDeviceId)
-        if (session != null) {
-            val decrypted = decryptWithSession(session, encryptedText)
-            if (decrypted != null) return decrypted
-        }
-        return decryptAny(encryptedText)
+        // Fail closed. Phase 1.2: this used to fall back to decryptAny, which
+        // tried every session key the device held. A ciphertext addressed to one
+        // peer therefore decrypted for any other peer, so the ciphertext was not
+        // bound to its recipient. With no session for this peer there is nothing
+        // to decrypt with, and returning null is the honest answer.
+        val session = getValidSession(peerDeviceId) ?: return null
+        return decryptWithSession(session, encryptedText)
     }
 
     fun decryptAny(encryptedText: String): String? {

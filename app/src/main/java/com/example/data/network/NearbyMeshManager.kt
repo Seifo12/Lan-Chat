@@ -725,8 +725,11 @@ class NearbyMeshManager(
                 val decrypted = if (EncryptionManager.isEncrypted(jsonString)) {
                     val peer = endpointToPeer[fromEndpointId]
                     if (peer != null && jsonString.startsWith("PENC:")) {
-                        EncryptionManager.getPairwiseManager()?.decryptFromPeer(peer.deviceId, jsonString)
-                            ?: EncryptionManager.decrypt(jsonString)
+                        // Phase 1.2: a pairwise blob that will not decrypt for
+                        // the peer it is addressed to is dropped rather than
+                        // retried under the device key.
+                        EncryptionManager.getPairwiseManager()
+                            ?.decryptFromPeer(peer.deviceId, jsonString)
                     } else {
                         EncryptionManager.decrypt(jsonString)
                     }
@@ -734,7 +737,9 @@ class NearbyMeshManager(
                     jsonString
                 }
 
-                val packet = NetworkPacket.fromJson(decrypted) ?: return@launch
+                // Phase 1.2: a null here means the payload was not protected for
+                // this peer, so it is dropped instead of being parsed or retried.
+                val packet = decrypted?.let { NetworkPacket.fromJson(it) } ?: return@launch
 
                 when (packet) {
                     is BeaconPacket -> {
@@ -974,11 +979,20 @@ class NearbyMeshManager(
 
         // تشفير الحزمة بمفتاح الطرف المستهدف PENC مباشرة دون أي تسريب
         val payloadToSend = if (packet is BeaconPacket || packet is BeaconAckPacket) {
+            // Beacons stay readable so discovery keeps working.
             plainJson
-        } else if (pairwise?.hasSession(targetDeviceId) == true) {
-            pairwise.encryptForPeer(targetDeviceId, plainJson) ?: EncryptionManager.encrypt(plainJson)
         } else {
-            EncryptionManager.encrypt(plainJson)
+            // Phase 1.2: fail closed. A payload that cannot be protected for its
+            // recipient is not sent at all. This used to fall back to the device
+            // storage key, which put the payload under a key the recipient was
+            // never meant to use, and told nobody.
+            val sealed = pairwise?.encryptForPeer(targetDeviceId, plainJson)
+            if (sealed == null) {
+                Log.e(TAG, "Refusing to send to $targetDeviceId: no pairwise " +
+                    "session, so the payload cannot be protected for it")
+                return false
+            }
+            sealed
         }
 
         if (endpointId != null && endpointToPeer.containsKey(endpointId)) {
@@ -1053,11 +1067,14 @@ class NearbyMeshManager(
                     }
                 }
             }
-            if (pairwise?.hasSession(targetRecipientId) == true) {
-                pairwise.encryptForPeer(targetRecipientId, rawInnerPacketJson) ?: EncryptionManager.encrypt(rawInnerPacketJson)
-            } else {
-                EncryptionManager.encrypt(rawInnerPacketJson)
+            // Phase 1.2: fail closed, as in sendPacketToPeer.
+            val sealedInner = pairwise?.encryptForPeer(targetRecipientId, rawInnerPacketJson)
+            if (sealedInner == null) {
+                Log.e(TAG, "Refusing to relay to $targetRecipientId: no pairwise " +
+                    "session, so the packet cannot be protected for it")
+                return false
             }
+            sealedInner
         }
 
         val meshPacket = MeshRelayPacket(
@@ -1083,13 +1100,14 @@ class NearbyMeshManager(
             try {
                 val pairwise = EncryptionManager.getPairwiseManager()
                 val decryptedJson = if (packet.encryptedPayload.startsWith("PENC:")) {
+                    // Phase 1.2: drop rather than retry under the device key.
                     pairwise?.decryptFromPeer(packet.originSenderId, packet.encryptedPayload)
-                        ?: EncryptionManager.decrypt(packet.encryptedPayload)
                 } else {
                     EncryptionManager.decrypt(packet.encryptedPayload)
                 }
 
-                val innerPacket = NetworkPacket.fromJson(decryptedJson)
+                // Phase 1.2: as above, drop rather than retry under another key.
+                val innerPacket = decryptedJson?.let { NetworkPacket.fromJson(it) }
                 if (innerPacket != null) {
                     processInnerMeshPacket(innerPacket, packet.originSenderId, packet.originSenderName)
                 }

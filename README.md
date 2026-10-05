@@ -149,11 +149,10 @@ is implemented and what is not. Nothing below is aspirational.
 This is an actively developed project and the security work is **not finished**.
 The following are real, known gaps:
 
-- **Encryption can silently fall back.** If pairwise key agreement fails or no
-  session exists, some send paths currently fall back to a different local key
-  instead of refusing to send. A message can therefore be encrypted under a key
-  the peer cannot use as an intended pairwise secret, rather than being rejected.
-  **Removing these silent fallbacks is Phase 1.2 and is the next work item.**
+- **Encryption fails closed.** If a payload cannot be protected for its intended
+  recipient, it is not sent at all. There is no path that substitutes the device
+  storage key or skips encryption. A dropped send is reported rather than
+  disguised as a delivered one.
 - **The identity key is a serialised software key.** As described above, the EC
   private key is written to disk as PKCS#8 bytes. Key material is therefore
   recoverable from a device backup, a rooted filesystem, or a compromise of the
@@ -162,12 +161,20 @@ The following are real, known gaps:
   the lifetime of a session, holds at most 1000 nonces and evicts the oldest
   beyond that, and is discarded entirely whenever a session is re-established,
   which happens automatically after the 30-day session age limit. A restart or a
-  re-establishment therefore replays cleanly. Replay protection must not be
-  relied on across restarts.
+  re-establishment therefore replays cleanly. Do not rely on replay protection
+  across restarts.
+- **A contact without a public key cannot be messaged.** Pairing exchanges public
+  keys, and a send needs the recipient's key to derive a shared secret. A contact
+  row that has never completed pairing has no key, so sends to it are refused.
+  This is intended, but it does mean legacy contacts must be re-paired.
 - **The transport is not yet pinned.** There is no mutual TLS with a pinned peer
   identity yet. A network attacker in radio range is not defended against
   impersonation today. Mutual TLS with a pinned peer identity is planned; see the
   design document for its phase.
+- **`decryptAny` still exists.** A generic decrypt helper will try every session
+  key the device holds, so it is not bound to a specific peer. The peer-addressed
+  decrypt path no longer uses it, but the generic helper remains until the phase
+  that removes it. Do not rely on peer binding for anything routed through it.
 - **No forward secrecy yet.** Session keys are derived from a static identity pair
   and cached, so compromising a device's identity key would allow past traffic to
   be decrypted. Forward secrecy is expected to arrive with the mutual TLS work

@@ -1,7 +1,10 @@
 package com.example.data.network
 
 import android.content.Context
+import android.util.Base64
 import androidx.room.Room
+import java.security.KeyPairGenerator
+import java.security.spec.ECGenParameterSpec
 import androidx.test.core.app.ApplicationProvider
 import com.example.data.local.ChatDatabase
 import com.example.data.local.MessageStatus
@@ -53,6 +56,35 @@ class TcpMessagingSendResultTest {
             .build()
         manager = TcpMessagingManager(context, database, UserPreferences(context))
         manager.nearbyFallbackSender = { _, _ -> false }
+        // Phase 1.2: a send is refused unless the recipient has a pairwise
+        // session, so the tests that expect delivery need the crypto engine.
+        EncryptionManager.initializePairwiseManager(context)
+    }
+
+    /**
+     * Phase 1.2. A contact that has completed pairing carries the peer's public
+     * key, which is what makes a pairwise session possible. A contact without one
+     * can no longer be messaged, which is the intended fail-closed behaviour.
+     */
+    private fun newPeerPublicKey(): String {
+        val generator = KeyPairGenerator.getInstance("EC")
+        generator.initialize(ECGenParameterSpec("secp256r1"))
+        return Base64.encodeToString(generator.generateKeyPair().public.encoded, Base64.NO_WRAP)
+    }
+
+    private suspend fun insertPairedContact(
+        deviceId: String, ip: String, port: Int, isOnline: Boolean = true
+    ) {
+        database.contactDao().insertOrUpdateContact(
+            com.example.data.local.ContactEntity(
+                deviceId = deviceId,
+                displayName = "Peer",
+                ipAddress = ip,
+                tcpPort = port,
+                isOnline = isOnline,
+                publicKeyBase64 = newPeerPublicKey()
+            )
+        )
     }
 
     @After
@@ -116,6 +148,7 @@ class TcpMessagingSendResultTest {
     @Test
     fun `text send over a live lan peer succeeds`() = runBlocking {
         val livePeer = newPeer()
+        insertPairedContact("peer_lan", "127.0.0.1", livePeer.port)
 
         val result = manager.sendTextMessage("127.0.0.1", livePeer.port, "peer_lan", "direct lan")
 
@@ -151,6 +184,7 @@ class TcpMessagingSendResultTest {
     @Test
     fun `photo send succeeds against a live peer and clears the pending queue`() = runBlocking {
         val livePeer = newPeer()
+        insertPairedContact("peer_lan", "127.0.0.1", livePeer.port)
         val file = mediaFile("send_photo_ok.jpg")
 
         val result = manager.sendPhotoMessage("127.0.0.1", livePeer.port, "peer_lan", file.absolutePath, caption = "pic")
@@ -219,8 +253,13 @@ class TcpMessagingSendResultTest {
             displayName = "Peer",
             ipAddress = "127.0.0.1",
             tcpPort = livePeer.port,
-            isOnline = true
+            isOnline = true,
+            publicKeyBase64 = newPeerPublicKey()
         )
+
+        // Phase 1.2: the send path resolves the recipient's public key from the
+        // database, so the contact must be stored there as well as passed in.
+        database.contactDao().insertOrUpdateContact(onlineContact)
 
         val result = manager.sendGroupTextMessage(
             groupId = "group_1",
@@ -292,8 +331,13 @@ class TcpMessagingSendResultTest {
             displayName = "Peer",
             ipAddress = "127.0.0.1",
             tcpPort = livePeer.port,
-            isOnline = true
+            isOnline = true,
+            publicKeyBase64 = newPeerPublicKey()
         )
+
+        // Phase 1.2: the send path resolves the recipient's public key from the
+        // database, so the contact must be stored there as well as passed in.
+        database.contactDao().insertOrUpdateContact(onlineContact)
 
         val result = manager.sendGroupPhotoMessage(
             groupId = "group_1",
