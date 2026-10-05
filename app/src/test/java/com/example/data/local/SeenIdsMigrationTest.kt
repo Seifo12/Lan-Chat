@@ -50,6 +50,18 @@ class SeenIdsMigrationTest {
         context.deleteDatabase(dbName)
     }
 
+    /**
+     * Walks a seeded v9 database all the way to the current version, validating
+     * each step against its exported schema. Written as a helper so these tests
+     * keep working when another version is added.
+     */
+    private fun migrateToCurrent() {
+        helper.runMigrationsAndValidate(
+            dbName, SCHEMA_VERSION, true,
+            ChatDatabase.MIGRATION_9_10, ChatDatabase.MIGRATION_10_11,
+        ).close()
+    }
+
     private fun seedV9(db: SupportSQLiteDatabase, rows: List<Pair<String, MessageStatus>>) {
         for ((index, pair) in rows.withIndex()) {
             val (id, status) = pair
@@ -89,8 +101,10 @@ class SeenIdsMigrationTest {
         }
 
         // runMigrationsAndValidate compares the migrated schema against the
-        // exported 10.json, so this is the real proof the DDL matches.
-        helper.runMigrationsAndValidate(dbName, 10, true, ChatDatabase.MIGRATION_9_10).close()
+        // exported schema for the target version, so this is the real proof the
+        // DDL matches. Both migrations run, because a v9 database has to reach
+        // whatever the current version is before Room will open it.
+        migrateToCurrent()
 
         val room = Room.databaseBuilder(context, ChatDatabase::class.java, dbName).build()
         try {
@@ -115,7 +129,7 @@ class SeenIdsMigrationTest {
         } finally {
             db.close()
         }
-        helper.runMigrationsAndValidate(dbName, 10, true, ChatDatabase.MIGRATION_9_10).close()
+        migrateToCurrent()
 
         val room = Room.databaseBuilder(context, ChatDatabase::class.java, dbName).build()
         try {
@@ -146,7 +160,7 @@ class SeenIdsMigrationTest {
         } finally {
             db.close()
         }
-        helper.runMigrationsAndValidate(dbName, 10, true, ChatDatabase.MIGRATION_9_10).close()
+        migrateToCurrent()
 
         val room = Room.databaseBuilder(context, ChatDatabase::class.java, dbName).build()
         try {

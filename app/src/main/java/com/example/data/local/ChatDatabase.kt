@@ -7,15 +7,26 @@ import androidx.room.RoomDatabase
 import androidx.room.migration.Migration
 import androidx.sqlite.db.SupportSQLiteDatabase
 
+/**
+ * The schema version.
+ *
+ * Declared at the top level because the @Database annotation needs a compile-time
+ * constant, and a companion constant is not usable from the annotation on its own
+ * class. Keeping it here is what stops the declared version and the number tests
+ * and tooling read from drifting apart.
+ */
+const val SCHEMA_VERSION = 11
+
 @Database(
     entities = [
         ChatMessageEntity::class,
         ContactEntity::class,
         GroupEntity::class,
         DiscoveredPeerEntity::class,
-        SeenIdEntity::class
+        SeenIdEntity::class,
+        PeerCounterEntity::class
     ],
-    version = 10,
+    version = SCHEMA_VERSION,
     exportSchema = true
 )
 abstract class ChatDatabase : RoomDatabase() {
@@ -24,16 +35,12 @@ abstract class ChatDatabase : RoomDatabase() {
     abstract fun contactDao(): ContactDao
 
     abstract fun seenIdDao(): SeenIdDao
+
+    abstract fun peerCounterDao(): PeerCounterDao
     abstract fun groupDao(): GroupDao
     abstract fun discoveredPeerDao(): DiscoveredPeerDao
 
     companion object {
-        /**
-         * The single source of truth for the schema version, so tests and tooling
-         * never hardcode a second copy of the number that @Database declares.
-         */
-        const val SCHEMA_VERSION = 10
-
         @Volatile
         private var INSTANCE: ChatDatabase? = null
 
@@ -110,6 +117,23 @@ abstract class ChatDatabase : RoomDatabase() {
             }
         }
 
+        /**
+         * Phase 1.3: persisted per-peer counters. Both directions survive a
+         * restart, which is what stops a capture being replayed by closing the
+         * app and stops a sender reissuing counters its peer has already seen.
+         */
+        val MIGRATION_10_11 = object : Migration(10, 11) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL(
+                    "CREATE TABLE IF NOT EXISTS `peer_counters` (" +
+                        "`peerDeviceId` TEXT NOT NULL, " +
+                        "`outgoingCounter` INTEGER NOT NULL, " +
+                        "`highWaterMark` INTEGER NOT NULL, " +
+                        "PRIMARY KEY(`peerDeviceId`))"
+                )
+            }
+        }
+
         fun getDatabase(context: Context): ChatDatabase {
             return INSTANCE ?: synchronized(this) {
                 val instance = Room.databaseBuilder(
@@ -117,7 +141,8 @@ abstract class ChatDatabase : RoomDatabase() {
                     ChatDatabase::class.java,
                     "lan_chat_database"
                 ).addMigrations(
-                MIGRATION_5_6, MIGRATION_6_7, MIGRATION_7_8, MIGRATION_8_9, MIGRATION_9_10
+                MIGRATION_5_6, MIGRATION_6_7, MIGRATION_7_8, MIGRATION_8_9,
+                MIGRATION_9_10, MIGRATION_10_11
             )
                     .build()
                 INSTANCE = instance

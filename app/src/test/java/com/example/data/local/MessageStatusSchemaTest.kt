@@ -65,40 +65,49 @@ class MessageStatusSchemaTest {
      * messages table, so it needed no migration. Proven by comparing the two
      * exported schemas rather than by assertion.
      */
-    @Test
-    fun `the messages table is unchanged between version 9 and version 10`() {
-        val atV9 = createSqlFor(exportedSchema(9), "messages")
-        val atV10 = createSqlFor(exportedSchema(10), "messages")
-
-        assertEquals(
-            "QUEUED and FAILED must not have altered the messages table; if they " +
-                "ever do, the database version has to move for that reason and this " +
-                "test should be rewritten to say so",
-            atV9,
-            atV10
-        )
+    /** Tables present in an exported schema version. */
+    private fun tablesIn(version: Int): Set<String> {
+        val entities = exportedSchema(version).getJSONObject("database").getJSONArray("entities")
+        return (0 until entities.length())
+            .map { entities.getJSONObject(it).getString("tableName") }
+            .toSet()
     }
 
     @Test
-    fun `version 10 differs from version 9 only by the seen_ids table`() {
-        fun tables(version: Int): Set<String> {
-            val entities = exportedSchema(version).getJSONObject("database")
-                .getJSONArray("entities")
-            return (0 until entities.length())
-                .map { entities.getJSONObject(it).getString("tableName") }
-                .toSet()
+    fun `the messages table is unchanged across every exported schema version`() {
+        val newest = SCHEMA_VERSION
+        for (version in 9 until newest) {
+            assertEquals(
+                "the messages table changed between version $version and ${version + 1}; " +
+                    "adding an enum constant must not do that, so a real schema change " +
+                    "needs the version to move for its own reason and this test " +
+                    "rewritten to say so",
+                createSqlFor(exportedSchema(version), "messages"),
+                createSqlFor(exportedSchema(version + 1), "messages")
+            )
         }
+    }
 
-        assertEquals(
-            "the only table 1.5 adds is the replay record",
-            setOf("seen_ids"),
-            tables(10) - tables(9)
+    @Test
+    fun `each schema version adds only the tables its phase introduced`() {
+        // Written as a table so a future version bump states its own addition here
+        // rather than silently changing what earlier versions are asserted to hold.
+        val addedPerVersion = mapOf(
+            10 to setOf("seen_ids"),
+            11 to setOf("peer_counters"),
         )
+        for ((version, expected) in addedPerVersion) {
+            assertEquals(
+                "version $version adds exactly these tables",
+                expected,
+                tablesIn(version) - tablesIn(version - 1)
+            )
+        }
     }
 
     @Test
     fun `status is declared TEXT so new enum constants need no migration`() {
-        val sql = createSqlFor(exportedSchema(10), "messages")
+        val sql = createSqlFor(exportedSchema(SCHEMA_VERSION), "messages")
         assertTrue(
             "status must stay TEXT for the no-migration claim to hold, was: $sql",
             // Room quotes identifiers with backticks in its exported DDL.
