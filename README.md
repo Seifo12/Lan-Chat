@@ -1,82 +1,286 @@
 # LAN Chat
 
-تطبيق أندرويد للمحادثة المباشرة (P2P) بين الهواتف على نفس الشبكة المحلية، بدون سيرفر وبدون إنترنت.
+**Offline peer-to-peer mesh and VoIP messenger for disaster relief and internet-isolated regions.**
 
-## كيف يعمل
+LAN Chat is an Android messenger built for places where there is no internet, no
+cell coverage, and no infrastructure to rely on. Devices find each other over the
+local network and pass traffic directly, or relay it through nearby phones using
+Google Nearby Connections when no direct path exists. There is no account, no
+server, and no cloud dependency.
 
-| المرحلة | المنفذ | الآلية |
+> **Copyright (C) 2026 LAN Chat.** Licensed under the GNU General Public License
+> v3.0. See [LICENSE](LICENSE).
+
+---
+
+## Table of contents
+
+- [Why this exists](#why-this-exists)
+- [Features](#features)
+- [How the network works](#how-the-network-works)
+- [Security](#security)
+  - [What is implemented today](#what-is-implemented-today)
+  - [Known limitations](#known-limitations-read-this-before-relying-on-it)
+- [Calls](#calls)
+- [Project structure](#project-structure)
+- [Building](#building)
+- [Verification](#verification)
+- [Roadmap](#roadmap)
+- [License](#license)
+
+---
+
+## Why this exists
+
+When a hurricane, flood, earthquake, or fire destroys the local network
+infrastructure, the people affected usually lose the ability to communicate
+exactly when they need it most. Cellular towers are down, the internet is gone,
+and consumer messaging apps depend on data centers that are unreachable.
+
+LAN Chat is designed for that window:
+
+- **No internet required.** Everything is local. Nothing leaves the area.
+- **No account or phone number.** Devices identify each other on the network.
+- **No infrastructure.** No server, no cloud, no Google Play Services
+  dependency for messaging.
+- **Ad-hoc topology.** If two devices cannot talk directly, a phone in between
+  relays the traffic, up to 8 hops.
+
+---
+
+## Features
+
+### Messaging
+
+- Text, photo, video, voice, and arbitrary file messages
+- Voice notes and full audio calls
+- Group conversations
+- Per-message delivery states (`sending`, `queued`, `sent`, `delivered`,
+  `read`, `failed`) so a message that did not go out is never shown as sent
+- Manual retry of a failed message, reusing the original message id
+- Message queue that survives app restarts and keeps pending sends until the peer
+  reappears
+
+### Connectivity
+
+- **Direct LAN** over TCP, with UDP broadcast/beacon discovery
+- **Nearby mesh relay** over Google Nearby Connections for devices with no direct
+  path, up to 8 hops
+- Automatic route selection with LAN tried first and mesh as fallback
+- Reconnect with backoff and an automatic recovery gate when connectivity returns
+- Wi-Fi lock control for sustained transfers
+
+### Pairing and identity
+
+- QR-code pairing and manual device-id entry
+- Public-key identity per device, established on first contact
+- Contact list with per-peer mesh endpoints
+
+### Interface
+
+- Material 3, light and dark
+- English and Arabic (RTL) with full translations, including accessibility labels
+- Three-tab layout: chats, contacts, settings
+
+---
+
+## How the network works
+
+```
+        Device A                Device B                Device C
+             |                     |                        |
+     +-------+-------+             |                        |
+     |  direct LAN   |=============|                        |
+     |   (TCP)       |             |                        |
+     +-------+-------+             |                        |
+             .                     |                        |
+             .    +----------------+----------------+       |
+             .    |                                 |       |
+             .    |      Nearby mesh relay          |       |
+             +====|=============+=================|=======+
+                  |             |                 |
+             direct LAN     direct LAN        direct LAN
+```
+
+When device A and device B can reach each other directly, traffic goes over a
+plain TCP connection and Nearby is not involved at all. Nearby Connections is
+only used as a relay path when a direct path is unavailable.
+
+Discovery beacons never create contact entries for unknown peers, and relayed
+peers are rate-limited so an unknown device cannot flood the local network.
+
+---
+
+## Security
+
+Security is the reason this project exists, so this section states exactly what
+is implemented and what is not. Nothing below is aspirational.
+
+### What is implemented today
+
+- **Hardware-backed local identity.** Each device generates an EC key pair
+  through the Android Keystore (`AndroidKeyStore` provider). The private key is
+  generated inside the keystore and is not extractable from the app process.
+- **Pairwise key agreement.** A per-peer ECDH key agreement derives a shared
+  secret. The two public keys are exchanged when a contact is established.
+- **Channel separation.** The shared secret is expanded with **HKDF-SHA256** into
+  128 bytes and split into four independent 32-byte keys: `chat`, `auth`,
+  `stream`, and `audio`. Compromising one channel key does not reveal any other.
+- **Authenticated encryption.** Every payload is encrypted with
+  **AES-256-GCM** (`AES/GCM/NoPadding`).
+- **Replay protection.** Received nonces are tracked per session and repeated
+  nonces are rejected.
+- **No plaintext-on-failure behaviour is being removed.** See the limitation
+  below; this is the highest-priority open item.
+
+### Known limitations (read this before relying on it)
+
+This is an actively developed project and the security work is **not finished**.
+The following are real, known gaps:
+
+- **Encryption can silently fall back.** If pairwise key agreement fails or no
+  session exists, some send paths currently fall back to a different local key
+  instead of refusing to send. A message can therefore be encrypted under a key
+  the peer cannot use as an intended pairwise secret, rather than being rejected.
+  **Removing these silent fallbacks is Phase 1.2 and is the next work item.**
+- **The transport is not yet pinned.** There is no mutual TLS with a pinned peer
+  identity yet. A network attacker in radio range is not defended against
+  impersonation today. Certificate pinning and a custom trust manager that
+  refuses unknown peers are scheduled for Phase 1.3.
+- **No forward secrecy.** Session keys are derived from a static identity pair and
+  cached. There is no ratchet, so compromising a device's identity key at any
+  point would allow past traffic to be decrypted. A ratchet is planned.
+- **Mesh relay is not yet end-to-end encrypted.** Traffic relayed through Nearby
+  is protected by the relay protocol, not yet by an independent pairwise
+  end-to-end layer.
+- **Not independently audited.** No third-party security review has been done.
+
+Do not rely on LAN Chat for communications where a compromise would put anyone
+at risk until Phase 1.2 and 1.3 have landed and the claims above have been
+re-verified against the code.
+
+---
+
+## Calls
+
+Voice calls run directly between devices over the local network.
+
+- Audio is captured, framed, encrypted with the pairwise `audio` channel key, and
+  sent over the established path.
+- The receiver runs a **jitter buffer** to absorb variable network delay, so
+  audio does not stutter when packets arrive out of order or in bursts. The buffer
+  is reset between calls and flushed on disconnect.
+- Call signalling and the audio path are separate, so control messages never
+  block on media.
+
+---
+
+## Project structure
+
+```
+app/
+  src/main/java/com/example/
+    data/
+      local/        Room database, DAOs, entities, schema migrations
+      network/      TCP messaging, UDP discovery, mesh, app updates
+      security/     keystore identity, pairwise sessions, encryption
+    ui/             Compose screens, view models, components
+    services/       foreground services and receivers
+  src/test/         unit tests (JVM + Robolectric)
+  schemas/          exported Room schemas, used by migration tests
+docs/               baseline measurements, decision records, design notes
+scripts/            verification script and tracked git hooks
+```
+
+Architecture is plain Kotlin with manual dependency injection. Networking is
+socket-level (TCP/UDP) and Room is used for persistence. There is no Hilt and no
+network client framework, because the transport is custom and offline-first.
+
+| | |
+|---|---|
+| Language | Kotlin |
+| UI | Jetpack Compose, Material 3 |
+| Persistence | Room 2.7.0 |
+| Build | Android Gradle Plugin 9.1.1, Gradle wrapper |
+| Min SDK | 24 (Android 7.0) |
+| Target SDK | 36 |
+| Version | 2.0 |
+
+---
+
+## Building
+
+Prerequisites: JDK 21 and the Android SDK (compile SDK 36.1).
+
+```bash
+git clone https://github.com/Seifo12/Lan-Chat.git
+cd Lan-Chat
+
+# point the build at your SDK, or set ANDROID_HOME
+echo "sdk.dir=/path/to/Android/sdk" > local.properties
+
+./gradlew :app:assembleDebug
+```
+
+`local.properties` is machine-specific and is not committed.
+
+---
+
+## Verification
+
+```bash
+# unit tests
+./gradlew :app:testDebugUnitTest
+
+# lint
+./gradlew :app:lintDebug
+
+# everything, including a stray-character gate over the sources
+powershell -File scripts/verify.ps1
+```
+
+The verification script fails on CJK and Unicode replacement characters inside
+source and documentation files, which is a recurring paste artefact in this
+codebase. A fast subset also runs as a tracked pre-commit hook; enable it once
+per clone with:
+
+```bash
+git config core.hooksPath scripts/hooks
+```
+
+Current state: **215 unit tests, 0 failures**, lint clean.
+
+---
+
+## Roadmap
+
+| Phase | Scope | Status |
 |---|---|---|
-| اكتشاف الأجهزة | UDP `8888` | بث نبضة JSON على عنوان Broadcast للشبكة |
-| الرسائل والملفات | TCP `9999` | إرسال مباشر بعد انتهاء الاكتشاف |
-| المكالمات الصوتية | TCP + UDP | offer/answer/ringing ثم بث صوت |
-| Mesh (بدون راوتر) | Google Nearby | استراتيجية P2P_CLUSTER عبر Play Services |
+| 0 | Baseline, schema export, lint gate, CI | done |
+| 1.1 | Real `QUEUED`/`FAILED` states, single-writer retry, legacy sweep | done |
+| 1.2 | Fail-closed encryption: remove all silent fallbacks | **next** |
+| 1.3 | mTLS transport with pinned peer identity, no trust-all | planned |
+| 1.4 | Forward secrecy ratchet | planned |
+| 1.5 | `seen_ids` schema migration, call/file resume | planned |
+| 1.6 | Peer pin columns schema migration | planned |
+| 1.7 | Mesh end-to-end encryption | planned |
 
-كل حزمة discovery تحمل `deviceId` والاسم و**المفتاح العام** فقط، فيتبادل الطرفان
-مفتاح ECDH (secp256r1) ويشفّران الرسائل بعد ذلك. المفتاح محفوظ في Android Keystore.
+See [docs/PHASE1-DESIGN.md](docs/PHASE1-DESIGN.md) for the design and
+[docs/DECISIONS.md](docs/DECISIONS.md) for the decision record.
 
-## المتطلبات
+---
 
-- **JDK 21** (مطلوب لـ Robolectric مع SDK 36)
-- **Android SDK**: compileSdk 36، build-tools 36، minSdk 24
-- ملف `local.properties` يحتوي على مسار الـ SDK
+## License
 
-```properties
-sdk.dir=C:\\Users\\<you>\\AppData\\Local\\Android\\Sdk
-```
+LAN Chat is free software: you can redistribute it and/or modify it under the
+terms of the GNU General Public License as published by the Free Software
+Foundation, either version 3 of the License, or (at your option) any later
+version.
 
-## البناء
+This program is distributed in the hope that it will be useful, but WITHOUT ANY
+WARRANTY; without even the implied warranty of MERCHANTABILITY or FITNESS FOR A
+PARTICULAR PURPOSE. See the GNU General Public License for more details.
 
-```bash
-./gradlew :app:assembleDebug        # APK للتطوير
-./gradlew :app:testDebugUnitTest    # كل الاختبارات
-./gradlew :app:assembleRelease      # نسخة موقّعة (تحتاج keystore)
-```
-
-ناتج نسخة التطوير: `app/build/outputs/apk/debug/app-debug.apk`
-
-## التوقيع
-
-نسختا Debug و Release تستخدمان مفتاح التوقيع الافتراضي لـ Android Studio ما لم يوجد
-ملف `my-upload-key.jks` في جذر المشروع. للنشر على Google Play اضبط متغيرات البيئة:
-
-```
-KEYSTORE_PATH, STORE_PASSWORD, KEY_ALIAS, KEY_PASSWORD
-```
-
-## الأذونات
-
-- `NEARBY_WIFI_DEVICES` و `BLUETOOTH_*` — للـ Mesh
-- `ACCESS_NETWORK_STATE` و `CHANGE_WIFI_MULTICAST_STATE` — للشبكة المحلية
-- `RECORD_AUDIO` و `CAMERA` — للمحتوى الصوتي والمرئي
-- `POST_NOTIFICATIONS` — للإشعارات
-
-## ملاحظات مهمة عن Mesh
-
-الـ Mesh يعتمد على **Google Play Services Nearby**. إذا كانت الخدمات غير متاحة أو
-معطلة على الجهاز، تعرض الواجهة السبب بوضوح بدلاً من الادعاء بأن Mesh يعمل.
-
-اكتشاف الشبكة المحلية (UDP/TCP) **لا يعتمد على Play Services** ويشتغل على أي جهاز
-على نفس الراوتر، أو عبر نقطة اتصال (Hotspot)، أو اتصال سلكي.
-
-## البنية
-
-```
-data/network/    UdpDiscoveryManager · TcpMessagingManager · NearbyMeshManager
-                 NetworkUtils · NetworkPayloads
-data/security/   EncryptionManager · PairwiseSessionManager
-data/local/      Room: contacts · messages · groups · prefs
-ui/              Compose screens + ChatViewModel
-service/         LanBackgroundService (foreground)
-```
-
-## تشخيص المشاكل
-
-```bash
-adb logcat -s UdpDiscovery:V TcpMessaging:V NearbyMeshManager:V NetworkUtils:V
-```
-
-- `Cannot listen on UDP port 8888` — تطبيق آخر يمسك المنفذ، والاستكشاف معطّل.
-- `Skipping beacon: no broadcast address` — لا توجد شبكة محلية صالحة.
-- `Mesh unavailable: ...` — Play Services غير متاح.
-
-السجل الكامل متاح أيضاً من داخل التطبيق في قسم السجلات المتقدمة.
+The full license text is in [LICENSE](LICENSE). It is the verbatim, unmodified
+FSF text, so the project attribution is recorded here and in the source headers
+rather than inside the license document.

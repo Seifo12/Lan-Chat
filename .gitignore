@@ -1,14 +1,44 @@
+# Gradle
 .gradle/
 build/
 app/build/
+
+# Machine-specific SDK location, never commit
 local.properties
+
+# Secrets: signing material must never reach the repository
+*.jks
+*.keystore
+keystore.properties
+*.p12
+*.pem
+*.key
+
+# IDE
 .idea/
 *.iml
-.DS_Store
+.kotlin/
 captures/
 .externalNativeBuild/
 .cxx/
+
+# Build output
 *.apk
 *.aab
-*.keystore
-*.jks
+*.idsig
+
+# Generated reports and logs
+*.log
+*.hprof
+lint-results*.html
+lint-results*.xml
+
+# OS noise
+.DS_Store
+Thumbs.db
+
+# Temporary artefacts
+*.tmp
+*.bak
+*~
+LanChat-FULL-CODE.txt
