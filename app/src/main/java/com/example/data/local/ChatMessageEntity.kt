@@ -3,11 +3,79 @@ package com.example.data.local
 import androidx.room.Entity
 import androidx.room.PrimaryKey
 
+/**
+ * Lifecycle of a message we tried to send.
+ *
+ * QUEUED and FAILED were added in Phase 1 step 1.1 because a failed send used to
+ * be written back as SENDING, which made a message that could never be delivered
+ * look like it was still going out, with no terminal state and nothing to tell
+ * the user.
+ */
 enum class MessageStatus {
+    /** A send is in flight right now. */
     SENDING,
+
+    /** The peer is not reachable. Normal for a LAN messenger, and not an error.
+     *  Attempts are not consumed while a message sits in this state. */
+    QUEUED,
+
+    /** Delivered to the peer transport. */
     SENT,
+
     DELIVERED,
-    READ
+
+    READ,
+
+    /** The send gave up: the attempts were exhausted while the peer was
+     *  reachable, or something refused it outright (for example a changed
+     *  identity key). Terminal until the user retries. */
+    FAILED;
+
+    companion object {
+
+        /** A reachable peer that answered stops here, per decision C2. */
+        const val MAX_SEND_ATTEMPTS = 5
+
+        /** Decision C2: queued messages younger than this are auto-sent when
+         *  the peer reappears; older ones wait for the user. */
+        const val QUEUED_AUTO_SEND_WINDOW_MS = 24L * 60 * 60 * 1000
+
+        /**
+         * Maps a send outcome onto a status.
+         *
+         * Reachability and success are separate inputs on purpose. A peer that
+         * answered but refused the message is a real failure, while a peer that
+         * never answered only means "not now", and conflating the two marks a
+         * failed message as sent.
+         *
+         * @param success whether the peer accepted the message.
+         * @param reachable whether the peer answered on the network at all. An
+         *   unreachable peer means QUEUED, because being offline is the normal
+         *   case for this app rather than a fault.
+         * @param attempts how many attempts have been made *while reachable*.
+         * @param blocked when true something refused the send outright, so it
+         *   fails immediately instead of burning the remaining attempts.
+         */
+        fun forSendOutcome(
+            success: Boolean,
+            reachable: Boolean,
+            attempts: Int,
+            blocked: Boolean = false,
+        ): MessageStatus = when {
+            success -> SENT
+            blocked -> FAILED
+            !reachable -> QUEUED
+            attempts <= 0 -> QUEUED
+            attempts >= MAX_SEND_ATTEMPTS -> FAILED
+            // A reachable peer that refused the message and still has attempts
+            // left: keep it queued so the worker or the user tries again.
+            else -> QUEUED
+        }
+
+        /** Decision C2: only recent queued messages are sent automatically. */
+        fun shouldAutoSendQueued(createdAt: Long, now: Long = System.currentTimeMillis()): Boolean =
+            now - createdAt <= QUEUED_AUTO_SEND_WINDOW_MS
+    }
 }
 
 @Entity(tableName = "messages")

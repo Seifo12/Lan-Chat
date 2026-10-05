@@ -4,6 +4,8 @@ import android.app.Application
 import android.util.Log
 import com.example.data.call.LanAudioCallManager
 import com.example.data.local.ChatDatabase
+import com.example.data.local.StaleSendingSweep
+import com.example.data.local.MessageStatus
 import com.example.data.local.UserPreferences
 import com.example.data.network.AudioPlayerHelper
 import com.example.data.network.AudioRecorderHelper
@@ -84,6 +86,14 @@ class LanChatApplication : Application() {
             }
         }
 
+        // 4b. Step 1.1 legacy sweep: older builds wrote a failed send back as
+        // SENDING, so any such row is stuck claiming to be in flight. Move the
+        // stale ones to QUEUED so they tell the truth and get retried.
+        applicationScope.launch {
+            runCatching { sweepStaleSendingMessages() }
+                .onFailure { Log.e(TAG, "Stale SENDING sweep failed: ${it.message}") }
+        }
+
         // 5. Connect Network Listeners Across Engines
         wireEngineListeners()
 
@@ -104,6 +114,22 @@ class LanChatApplication : Application() {
         } catch (e: Exception) {
             Log.e(TAG, "Failed to start LanBackgroundService: ${e.message}")
         }
+    }
+
+    /**
+     * Step 1.1 legacy sweep. Anything an older build left as SENDING with no send
+     * in flight becomes QUEUED, which is the honest state: we are waiting for
+     * the peer, and the queue worker will pick it up.
+     */
+    private suspend fun sweepStaleSendingMessages() {
+        val now = System.currentTimeMillis()
+        val threshold = now - StaleSendingSweep.STALE_AFTER_MS
+        val stale = database.chatMessageDao().getStaleSendingMessages(threshold)
+        if (stale.isEmpty()) return
+        for (message in stale) {
+            database.chatMessageDao().updateMessageStatus(message.id, MessageStatus.QUEUED)
+        }
+        Log.i(TAG, "Moved ${stale.size} legacy SENDING row(s) to QUEUED")
     }
 
     private fun wireEngineListeners() {

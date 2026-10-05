@@ -1,0 +1,10 @@
+<resources>
+    <!-- Message delivery status. Step 1.1 added QUEUED and FAILED. -->
+    <string name="status_sending">جاري الإرسال</string>
+    <string name="status_queued">في الانتظار حتى الجهاز يرجع متصل</string>
+    <string name="status_sent">تم الإرسال</string>
+    <string name="status_delivered">تم التسليم</string>
+    <string name="status_read">تمت القراءة</string>
+    <string name="status_failed">لم يتم الإرسال</string>
+    <string name="action_retry_send">إعادة المحاولة</string>
+</resources>

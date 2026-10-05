@@ -67,6 +67,46 @@ android {
   }
 }
 
+/**
+ * Stages the exported Room schemas so a Robolectric migration test can read them
+ * from assets. app/schemas stays the single source of truth, so nothing is
+ * duplicated in git.
+ *
+ * MigrationTestHelper builds the old database out of the exported schema JSON and
+ * reads it from assets. AGP 9 does not merge unit-test source set assets into the
+ * APK a Robolectric test runs against, so the schemas are mounted on the debug
+ * variant, which is the variant the unit test APK is built from. Release is
+ * untouched.
+ */
+abstract class SyncRoomSchemaAssets : DefaultTask() {
+    @get:InputDirectory
+    @get:PathSensitive(PathSensitivity.RELATIVE)
+    abstract val schemasDir: DirectoryProperty
+
+    @get:OutputDirectory
+    abstract val outputDir: DirectoryProperty
+
+    @TaskAction
+    fun stage() {
+        val target = outputDir.get().asFile
+        target.deleteRecursively()
+        schemasDir.get().asFile.copyRecursively(target, overwrite = true)
+    }
+}
+
+val syncRoomSchemas by tasks.registering(SyncRoomSchemaAssets::class) {
+    schemasDir.set(layout.projectDirectory.dir("schemas"))
+}
+
+androidComponents {
+    onVariants(selector().withName("debug")) { variant ->
+        variant.sources.assets?.addGeneratedSourceDirectory(
+            syncRoomSchemas,
+            SyncRoomSchemaAssets::outputDir,
+        )
+    }
+}
+
 dependencies {
   implementation(platform(libs.androidx.compose.bom))
   implementation(libs.androidx.activity.compose)
@@ -93,6 +133,7 @@ dependencies {
   testImplementation(libs.androidx.core)
   testImplementation(libs.androidx.junit)
   testImplementation(libs.junit)
+  testImplementation(libs.androidx.room.testing)
   testImplementation(libs.kotlinx.coroutines.test)
   testImplementation(libs.robolectric)
   testImplementation(libs.roborazzi)

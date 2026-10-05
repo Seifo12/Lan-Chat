@@ -1,3 +1,12 @@
 <resources>
-    <string name="app_name">LAN Chat</string>
+    <string name="app_name" translatable="false">LAN Chat</string>
+
+    <!-- Message delivery status. Step 1.1 added QUEUED and FAILED. -->
+    <string name="status_sending">Sending</string>
+    <string name="status_queued">Waiting for the device to come back online</string>
+    <string name="status_sent">Sent</string>
+    <string name="status_delivered">Delivered</string>
+    <string name="status_read">Read</string>
+    <string name="status_failed">Not delivered</string>
+    <string name="action_retry_send">Try again</string>
 </resources>

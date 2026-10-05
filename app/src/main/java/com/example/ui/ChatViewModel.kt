@@ -832,6 +832,30 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
+    /**
+     * Step 1.1: retry a message the user explicitly asked us to try again.
+     *
+     * FAILED is terminal by design, so a retry is always a user action. Only our
+     * own FAILED direct messages qualify, and the resend keeps the original
+     * messageId. The status is decided by the send path itself, so an
+     * unreachable peer becomes QUEUED rather than being reported as sent.
+     */
+    fun retryFailedMessage(messageId: String) {
+        viewModelScope.launch(Dispatchers.IO) {
+            val message = database.chatMessageDao().getMessageById(messageId) ?: return@launch
+            if (!message.isFromMe || message.isGroup) return@launch
+            if (message.status != MessageStatus.FAILED) return@launch
+
+            // TcpMessagingManager owns the status for a retry, including the
+            // intermediate SENDING, so the row is written exactly once per
+            // outcome rather than from two places.
+            runCatching { tcpMessaging.retryMessage(message) }
+                .onFailure { error ->
+                    Log.w("ChatViewModel", "Retry of $messageId threw: ${error.message}")
+                }
+        }
+    }
+
     fun sendTextMessage(text: String) {
         if (text.isBlank()) return
         val contact = _activeContact.value

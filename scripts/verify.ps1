@@ -34,6 +34,23 @@ function Fail($msg) {
     exit 1
 }
 
+# Gradle needs JDK 17+ and refuses to run on the JVM 8 that some shells still
+# default to, which fails deep inside the build with a confusing message. If
+# JAVA_HOME is not already set, fall back to the project's JDK 21 toolchain.
+if (-not $env:JAVA_HOME) {
+    $toolchainJdk = 'D:\LanChatToolchain\jdk21\jdk-21.0.12.1+1'
+    if (Test-Path -LiteralPath $toolchainJdk) {
+        $env:JAVA_HOME = $toolchainJdk
+        Write-Host "Using JAVA_HOME=$toolchainJdk"
+    } else {
+        Fail 'JAVA_HOME is not set and the default JDK 21 toolchain was not found.'
+    }
+}
+if (-not $env:GRADLE_USER_HOME) {
+    $gradleHome = 'D:\LanChatToolchain\gradle-home'
+    if (Test-Path -LiteralPath $gradleHome) { $env:GRADLE_USER_HOME = $gradleHome }
+}
+
 # ---------------------------------------------------------------------------
 Write-Step 'Stray characters (CJK / replacement)'
 # A CJK character inside an Arabic comment means text was pasted from a tool that

@@ -40,6 +40,8 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.ErrorOutline
+import androidx.compose.material.icons.filled.Schedule
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Call
 import androidx.compose.material.icons.filled.CameraAlt
@@ -83,6 +85,7 @@ import androidx.compose.material3.IconButton
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material.icons.automirrored.filled.KeyboardArrowLeft
 import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.NavigationBar
 import androidx.compose.material3.NavigationBarItem
@@ -108,6 +111,7 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.scale
 import androidx.compose.ui.graphics.Color
@@ -125,6 +129,7 @@ import androidx.compose.ui.unit.sp
 import com.example.data.local.ContactEntity
 import com.example.data.local.GroupEntity
 import com.example.data.local.MessageStatus
+import com.lanchat.offline.messenger.R
 import com.example.ui.ChatViewModel
 import com.example.ui.ConversationUiItem
 import com.example.ui.components.AvatarView
@@ -642,6 +647,7 @@ fun HomeScreen(
                             onClearConversation = { convId ->
                                 conversationToDeleteId = convId
                             },
+                            onRetrySend = { messageId -> viewModel.retryFailedMessage(messageId) },
                             onStartNewChat = { showNewChatSheet = true },
                             onScanClick = {
                                 viewModel.refreshNetworkAndPermissions()
@@ -860,6 +866,7 @@ private fun ChatsTabContent(
     onEditContact: (ContactEntity) -> Unit,
     onDeleteContact: (ContactEntity) -> Unit,
     onClearConversation: (String) -> Unit,
+    onRetrySend: (String) -> Unit,
     onStartNewChat: () -> Unit,
     onScanClick: () -> Unit
 ) {
@@ -1187,6 +1194,7 @@ private fun ChatsTabContent(
                         onDeleteContact = {
                             if (item.contact != null) onDeleteContact(item.contact)
                         },
+                        onRetrySend = { messageId -> onRetrySend(messageId) },
                         onClearConversation = {
                             onClearConversation(item.id)
                         }
@@ -1243,7 +1251,8 @@ private fun LanConversationItem(
     onVoiceCall: () -> Unit,
     onEditContact: () -> Unit,
     onDeleteContact: () -> Unit,
-    onClearConversation: () -> Unit
+    onClearConversation: () -> Unit,
+    onRetrySend: (String) -> Unit
 ) {
     var showMenu by remember { mutableStateOf(false) }
 
@@ -1348,15 +1357,46 @@ private fun LanConversationItem(
                             MessageStatus.SENDING -> {
                                 Icon(
                                     imageVector = Icons.Default.Refresh,
-                                    contentDescription = "جاري الإرسال",
+                                    contentDescription = stringResource(R.string.status_sending),
                                     tint = AppTheme.colors.textSecondary,
                                     modifier = Modifier.size(13.dp)
                                 )
                             }
+                            // Step 1.1: a queued message is waiting for the peer
+                            // to come back, which is normal here, so it reads as
+                            // "waiting" rather than as an error.
+                            MessageStatus.QUEUED -> {
+                                Icon(
+                                    imageVector = Icons.Default.Schedule,
+                                    contentDescription = stringResource(R.string.status_queued),
+                                    tint = AppTheme.colors.textSecondary,
+                                    modifier = Modifier.size(13.dp)
+                                )
+                            }
+                            // A failed message is terminal and offers a retry.
+                            MessageStatus.FAILED -> {
+                                Row(
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.spacedBy(6.dp),
+                                    modifier = Modifier.clickable { onRetrySend(lastMsg.id) },
+                                ) {
+                                    Icon(
+                                        imageVector = Icons.Default.ErrorOutline,
+                                        contentDescription = stringResource(R.string.status_failed),
+                                        tint = AppTheme.colors.error,
+                                        modifier = Modifier.size(14.dp)
+                                    )
+                                    Text(
+                                        text = stringResource(R.string.action_retry_send),
+                                        style = MaterialTheme.typography.labelSmall,
+                                        color = AppTheme.colors.error,
+                                    )
+                                }
+                            }
                             MessageStatus.SENT -> {
                                 Icon(
                                     imageVector = Icons.Default.Done,
-                                    contentDescription = "تم الإرسال",
+                                    contentDescription = stringResource(R.string.status_sent),
                                     tint = AppTheme.colors.textSecondary,
                                     modifier = Modifier.size(14.dp)
                                 )
@@ -1364,7 +1404,7 @@ private fun LanConversationItem(
                             MessageStatus.DELIVERED -> {
                                 Icon(
                                     imageVector = Icons.Default.DoneAll,
-                                    contentDescription = "تم التسليم",
+                                    contentDescription = stringResource(R.string.status_delivered),
                                     tint = AppTheme.colors.textSecondary,
                                     modifier = Modifier.size(15.dp)
                                 )
@@ -1372,7 +1412,7 @@ private fun LanConversationItem(
                             MessageStatus.READ -> {
                                 Icon(
                                     imageVector = Icons.Default.DoneAll,
-                                    contentDescription = "تمت القراءة",
+                                    contentDescription = stringResource(R.string.status_read),
                                     tint = AppTheme.colors.primaryLight,
                                     modifier = Modifier.size(15.dp)
                                 )

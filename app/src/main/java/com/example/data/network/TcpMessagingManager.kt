@@ -765,17 +765,122 @@ class TcpMessagingManager(
         }
     }
 
+    /**
+     * Step 1.1: resend a message the user explicitly retried, keeping the
+     * original messageId so the peer recognises it as the same message rather
+     * than a new one.
+     *
+     * There is no fallback here by design. Each media type is dispatched through
+     * its own normal send path, and whatever that path returns is mapped onto a
+     * status by [MessageStatus.forSendOutcome]. A peer that cannot be reached
+     * becomes QUEUED, not SENT.
+     */
+    suspend fun retryMessage(message: ChatMessageEntity): MessageStatus {
+        if (message.isGroup) {
+            // Group fan-out has its own status handling and is retried by the
+            // queue worker, not by the per-message button.
+            return MessageStatus.QUEUED
+        }
+        // This method is the single writer of the status for a retry: it marks
+        // SENDING on the way in and the real outcome on the way out, so the row
+        // is updated exactly once per outcome. It also owns the failure path, so
+        // the row can never be stranded on SENDING.
+        database.chatMessageDao().updateMessageStatus(message.id, MessageStatus.SENDING)
+
+        return try {
+            retryMessageAttempt(message)
+        } catch (error: Exception) {
+            Log.e(TAG, "Retry of ${message.id} failed: ${error.message}")
+            database.chatMessageDao().updateMessageStatus(message.id, MessageStatus.FAILED)
+            MessageStatus.FAILED
+        }
+    }
+
+    private suspend fun retryMessageAttempt(message: ChatMessageEntity): MessageStatus {
+        val contact = database.contactDao().getContactById(message.recipientId)
+        val status = if (contact == null ||
+            (!RouteResolver.isRoutableIp(contact.ipAddress) && contact.meshEndpointId == null)
+        ) {
+            // We do not even have a usable address for this peer, so the send
+            // cannot be attempted. Treat it as unreachable rather than failed:
+            // the address may still become routable when they are back.
+            MessageStatus.QUEUED
+        } else {
+            val reachable = runCatching {
+                NetworkUtils.testTcpPort(contact.ipAddress, contact.tcpPort)
+            }.getOrDefault(false)
+
+            val result: Result<ChatMessageEntity> = when {
+                message.isVoice && message.filePath != null ->
+                    sendVoiceMessage(
+                        recipientIp = contact.ipAddress, recipientPort = contact.tcpPort,
+                        recipientId = contact.deviceId, voiceFile = File(message.filePath),
+                        durationSeconds = message.audioDurationSeconds,
+                    existingMessageId = message.id,
+                )
+
+            message.isPhoto && message.filePath != null ->
+                sendPhotoMessage(
+                    recipientIp = contact.ipAddress, recipientPort = contact.tcpPort,
+                    recipientId = contact.deviceId, localPhotoPath = message.filePath,
+                    caption = message.text, existingMessageId = message.id,
+                )
+
+            message.isVideo && message.filePath != null ->
+                sendVideoMessage(
+                    recipientIp = contact.ipAddress, recipientPort = contact.tcpPort,
+                    recipientId = contact.deviceId, localFilePath = message.filePath,
+                    fileName = message.fileName ?: "video.mp4", fileSize = message.fileSize,
+                    mimeType = message.mimeType ?: "video/mp4", caption = message.text,
+                    existingMessageId = message.id,
+                )
+
+            message.isFile && message.filePath != null ->
+                sendDocFileMessage(
+                    recipientIp = contact.ipAddress, recipientPort = contact.tcpPort,
+                    recipientId = contact.deviceId, localFilePath = message.filePath,
+                    fileName = message.fileName ?: "file", fileSize = message.fileSize,
+                    mimeType = message.mimeType ?: "application/octet-stream",
+                    caption = message.text, existingMessageId = message.id,
+                )
+
+            else ->
+                sendTextMessage(
+                    recipientIp = contact.ipAddress, recipientPort = contact.tcpPort,
+                    recipientId = contact.deviceId, text = message.text,
+                    existingMessageId = message.id,
+                )
+        }
+
+            if (result.isSuccess) {
+                MessageStatus.forSendOutcome(success = true, reachable = true, attempts = 1)
+            } else {
+                // `reachable` was measured before the attempt, so a failure against
+                // a live peer is a real failure, while a failure against a peer
+                // that never answered only means "not now".
+                MessageStatus.forSendOutcome(success = false, reachable = reachable, attempts = 1)
+            }
+        }
+
+        database.chatMessageDao().updateMessageStatus(message.id, status)
+        return status
+    }
+
     suspend fun sendTextMessage(
-        recipientIp: String, recipientPort: Int, recipientId: String, text: String
+        recipientIp: String, recipientPort: Int, recipientId: String, text: String,
+        existingMessageId: String? = null
     ): Result<ChatMessageEntity> = withContext(Dispatchers.IO) {
-        val messageId = "msg_${System.currentTimeMillis()}_${userPreferences.deviceId.take(4)}"
+        val messageId = existingMessageId
+            ?: "msg_${System.currentTimeMillis()}_${userPreferences.deviceId.take(4)}"
         val entity = ChatMessageEntity(
             id = messageId, conversationId = recipientId, senderId = userPreferences.deviceId,
             senderName = userPreferences.displayName, recipientId = recipientId, text = text,
             isPhoto = false, timestamp = System.currentTimeMillis(), isFromMe = true,
             status = MessageStatus.SENDING, isSenderDeveloper = userPreferences.isDeveloper
         )
-        database.chatMessageDao().insertMessage(entity)
+        // On a retry the row already exists; inserting again would reset its
+        // timestamp and lose the original ordering.
+        if (existingMessageId == null) database.chatMessageDao().insertMessage(entity)
 
         val signature = EncryptionManager.getPairwiseManager()?.signData(text.trim().toByteArray(Charsets.UTF_8))
 
@@ -1307,9 +1412,10 @@ class TcpMessagingManager(
      */
     suspend fun sendVoiceMessage(
         recipientIp: String, recipientPort: Int, recipientId: String,
-        voiceFile: File, durationSeconds: Int
+        voiceFile: File, durationSeconds: Int, existingMessageId: String? = null
     ): Result<ChatMessageEntity> = withContext(Dispatchers.IO) {
-        val messageId = "voice_${System.currentTimeMillis()}_${userPreferences.deviceId.take(4)}"
+        val messageId = existingMessageId
+            ?: "voice_${System.currentTimeMillis()}_${userPreferences.deviceId.take(4)}"
         val entity = ChatMessageEntity(
             id = messageId, conversationId = recipientId, senderId = userPreferences.deviceId,
             senderName = userPreferences.displayName, recipientId = recipientId,
@@ -1318,7 +1424,7 @@ class TcpMessagingManager(
             timestamp = System.currentTimeMillis(), isFromMe = true, status = MessageStatus.SENDING,
             isSenderDeveloper = userPreferences.isDeveloper
         )
-        database.chatMessageDao().insertMessage(entity)
+        if (existingMessageId == null) database.chatMessageDao().insertMessage(entity)
 
         // Nearby بحد أقصى ~32KB للـ BYTES payload، فأي تسجيل بيتسلّم عبر MESH
         // لازم يروح stream مش base64 JSON، وإلا Payload.fromBytes بيرمي والرسالة بتضيع.

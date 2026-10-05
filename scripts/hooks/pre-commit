@@ -1,0 +1,19 @@
+#!/bin/sh
+# Pre-commit hook: fast half of verification (stray characters + unit tests).
+# Full verification including lint runs in CI.
+#
+# Enable it for a fresh clone with:
+#   git config core.hooksPath scripts/hooks
+#
+# The hook is tracked rather than living in .git/hooks so it is shared with
+# everyone who clones the repository.
+set -e
+# .git/hooks -> repo root is two levels up from the hooks directory, not one.
+cd "$(git rev-parse --show-toplevel)"
+
+if ! command -v powershell >/dev/null 2>&1; then
+    echo "pre-commit: powershell not found, skipping verification" >&2
+    exit 0
+fi
+
+exec powershell -NoProfile -ExecutionPolicy Bypass -File scripts/verify.ps1 -Quick

@@ -42,6 +42,18 @@ interface ChatMessageDao {
     @Query("SELECT * FROM messages WHERE isFromMe = 1 AND isGroup = 0 AND status = 'SENDING' ORDER BY receivedAt ASC, timestamp ASC")
     suspend fun getAllPendingDirectMessages(): List<ChatMessageEntity>
 
+    /**
+     * Step 1.1 legacy sweep: rows left as SENDING by an older build, where a
+     * failed send was written back as SENDING instead of a real terminal state.
+     * Only rows older than the window are returned so a send that is genuinely
+     * in flight is never touched.
+     */
+    @Query(
+        "SELECT * FROM messages WHERE isFromMe = 1 AND status = 'SENDING' " +
+            "AND receivedAt < :threshold"
+    )
+    suspend fun getStaleSendingMessages(threshold: Long): List<ChatMessageEntity>
+
     @Query("DELETE FROM messages WHERE conversationId = :conversationId")
     suspend fun clearConversation(conversationId: String)
 }
