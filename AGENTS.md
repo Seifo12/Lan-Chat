@@ -43,6 +43,30 @@ powershell -File scripts/verify.ps1
 - The repository must contain no CJK characters and no `U+FFFD`. Pasted text
   has mixed scripts before, so `scripts/verify.ps1` fails the build on this.
 
+## Security rules
+
+These are not style preferences. Violating them is a bug.
+
+- **No silent fallbacks.** If a security step fails, fail the operation and say
+  why. Never substitute a weaker mechanism and continue. Specifically forbidden:
+  `encryptForPeer(...) ?: encryptWithSomethingElse()`, a keystore error that
+  downgrades to software crypto, and regenerating a device identity because its
+  stored key failed to load. An identity that fails to load must surface an error,
+  not silently become a new key.
+- **No trust-all TrustManager.** A custom `X509TrustManager` must never accept
+  every certificate. Unknown peers are rejected; a pinned peer's key changing is a
+  hard failure, never a prompt to trust whatever arrived.
+- **Tests first for security fixes.** Write the failing test that demonstrates the
+  weakness before changing the code. A security fix without a test that fails
+  without it is not finished, because nothing proves the weakness is gone.
+- **Security design choices need approval.** Do not choose an algorithm, key
+  size, curve, pinning policy, or protocol version unilaterally. Propose the
+  option with its source and trade-off, then wait. Sizes and primitives are
+  load-bearing and expensive to change later.
+- **State any `--no-verify`.** If a commit or push needed `--no-verify`,
+  `--force`, or a hook bypass, say so explicitly in the report, with the reason
+  and what the skipped check would have covered.
+
 ## Claims need evidence
 
 Do not describe a library, an API, a store policy, or a security property as
@@ -60,6 +84,11 @@ prove that, so run it before assuming a migration is needed.
 
 ## Current state
 
-Security work is **not finished**. The silent encryption fallbacks are removed in
-Phase 1.2 and transport pinning in 1.3. See the security section of `README.md`
-for the authoritative list of gaps, and do not let a change quietly contradict it.
+Security work is **not finished**. Silent encryption fallbacks are removed in
+Phase 1.2 and transport trust in 1.10, and neither is done. The identity key is a
+serialised software EC key, not a keystore-held key. Seen-nonce replay protection
+is in-memory only. See the security section of `README.md` for the authoritative
+list of gaps, and do not let a change quietly contradict it.
+
+Phase scope and order live in `docs/PHASE1-DESIGN.md`. Do not restate or
+renumber the phases here; reference that document instead.

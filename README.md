@@ -41,8 +41,14 @@ LAN Chat is designed for that window:
 
 - **No internet required.** Everything is local. Nothing leaves the area.
 - **No account or phone number.** Devices identify each other on the network.
-- **No infrastructure.** No server, no cloud, no Google Play Services
-  dependency for messaging.
+- **Direct LAN messaging needs no cloud service at all.** Chat, calls and file
+  transfer between devices on the same local network work with no internet and no
+  Google account.
+- **The mesh relay path does require Google Play services.** Relaying through
+  Google Nearby Connections means the relay feature depends on Play services being
+  present and functional on the device. On a device without it, direct LAN still
+  works; only multi-hop relay is unavailable.
+- **No infrastructure.** No server and no cloud of our own.
 - **Ad-hoc topology.** If two devices cannot talk directly, a phone in between
   relays the traffic, up to 8 hops.
 
@@ -58,8 +64,9 @@ LAN Chat is designed for that window:
 - Per-message delivery states (`sending`, `queued`, `sent`, `delivered`,
   `read`, `failed`) so a message that did not go out is never shown as sent
 - Manual retry of a failed message, reusing the original message id
-- Message queue that survives app restarts and keeps pending sends until the peer
-  reappears
+- Pending sends persist in the database and are re-attempted when the peer comes
+  back. **This currently covers `sending` only**; messages that settle into
+  `queued` are not yet picked up again by the drain worker. See Known limitations.
 
 ### Connectivity
 
@@ -118,9 +125,14 @@ is implemented and what is not. Nothing below is aspirational.
 
 ### What is implemented today
 
-- **Hardware-backed local identity.** Each device generates an EC key pair
-  through the Android Keystore (`AndroidKeyStore` provider). The private key is
-  generated inside the keystore and is not extractable from the app process.
+- **Software EC identity key.** Each device generates a `secp256r1` key pair with
+  the plain JCE generator `KeyPairGenerator.getInstance("EC")`. This is **not** an
+  Android Keystore key. The private key is exported to PKCS#8 bytes and stored in
+  private `SharedPreferences`, encrypted with the keystore-held AES local-storage
+  key, then reloaded on startup through `PKCS8EncodedKeySpec`. Because the EC key
+  is a normal software key that is serialised to disk, it is extractable from the
+  device once the wrapping AES key is compromised. The only key held by the
+  Android Keystore is that AES local-storage key.
 - **Pairwise key agreement.** A per-peer ECDH key agreement derives a shared
   secret. The two public keys are exchanged when a contact is established.
 - **Channel separation.** The shared secret is expanded with **HKDF-SHA256** into
@@ -128,10 +140,9 @@ is implemented and what is not. Nothing below is aspirational.
   `stream`, and `audio`. Compromising one channel key does not reveal any other.
 - **Authenticated encryption.** Every payload is encrypted with
   **AES-256-GCM** (`AES/GCM/NoPadding`).
-- **Replay protection.** Received nonces are tracked per session and repeated
-  nonces are rejected.
-- **No plaintext-on-failure behaviour is being removed.** See the limitation
-  below; this is the highest-priority open item.
+- **Replay protection, in memory only.** Received nonces are held in a per-session
+  set and a repeated nonce is rejected. See the limitation below for how little
+  this is worth.
 
 ### Known limitations (read this before relying on it)
 
@@ -143,16 +154,32 @@ The following are real, known gaps:
   instead of refusing to send. A message can therefore be encrypted under a key
   the peer cannot use as an intended pairwise secret, rather than being rejected.
   **Removing these silent fallbacks is Phase 1.2 and is the next work item.**
+- **The identity key is a serialised software key.** As described above, the EC
+  private key is written to disk as PKCS#8 bytes. Key material is therefore
+  recoverable from a device backup, a rooted filesystem, or a compromise of the
+  AES wrapping key.
+- **Replay protection is not durable.** The seen-nonce set lives only in RAM for
+  the lifetime of a session, holds at most 1000 nonces and evicts the oldest
+  beyond that, and is discarded entirely whenever a session is re-established,
+  which happens automatically after the 30-day session age limit. A restart or a
+  re-establishment therefore replays cleanly. Replay protection must not be
+  relied on across restarts.
 - **The transport is not yet pinned.** There is no mutual TLS with a pinned peer
   identity yet. A network attacker in radio range is not defended against
-  impersonation today. Certificate pinning and a custom trust manager that
-  refuses unknown peers are scheduled for Phase 1.3.
-- **No forward secrecy.** Session keys are derived from a static identity pair and
-  cached. There is no ratchet, so compromising a device's identity key at any
-  point would allow past traffic to be decrypted. A ratchet is planned.
+  impersonation today. Mutual TLS with a pinned peer identity is planned; see the
+  design document for its phase.
+- **No forward secrecy yet.** Session keys are derived from a static identity pair
+  and cached, so compromising a device's identity key would allow past traffic to
+  be decrypted. Forward secrecy is expected to arrive with the mutual TLS work
+  (TLS 1.3), not as a separate key ratchet.
 - **Mesh relay is not yet end-to-end encrypted.** Traffic relayed through Nearby
   is protected by the relay protocol, not yet by an independent pairwise
   end-to-end layer.
+- **The send queue does not yet cover `queued` messages.** The drain worker that
+  retries pending sends selects `sending` rows only, so a message that settles
+  into `queued` because the peer was unreachable stays `queued` and is not
+  re-attempted when that peer returns. A message in `failed` is deliberately not
+  retried automatically. This is being corrected on this branch.
 - **Not independently audited.** No third-party security review has been done.
 
 Do not rely on LAN Chat for communications where a compromise would put anyone
@@ -254,16 +281,14 @@ Current state: **215 unit tests, 0 failures**, lint clean.
 
 ## Roadmap
 
-| Phase | Scope | Status |
-|---|---|---|
-| 0 | Baseline, schema export, lint gate, CI | done |
-| 1.1 | Real `QUEUED`/`FAILED` states, single-writer retry, legacy sweep | done |
-| 1.2 | Fail-closed encryption: remove all silent fallbacks | **next** |
-| 1.3 | mTLS transport with pinned peer identity, no trust-all | planned |
-| 1.4 | Forward secrecy ratchet | planned |
-| 1.5 | `seen_ids` schema migration, call/file resume | planned |
-| 1.6 | Peer pin columns schema migration | planned |
-| 1.7 | Mesh end-to-end encryption | planned |
+Phase scope, contents and execution order are specified and tracked in
+**[docs/PHASE1-DESIGN.md](docs/PHASE1-DESIGN.md)**. That document is the single
+source of truth and is deliberately not summarised or renumbered here, because a
+second copy of a phase list is a second copy that goes stale.
+
+Phase 1.1 (message lifecycle) and the Phase 0 groundwork are complete. The next
+item is the fail-closed encryption work; see the design document for what it
+covers.
 
 See [docs/PHASE1-DESIGN.md](docs/PHASE1-DESIGN.md) for the design and
 [docs/DECISIONS.md](docs/DECISIONS.md) for the decision record.
