@@ -35,6 +35,7 @@ import java.net.InetSocketAddress
 import java.net.ServerSocket
 import java.net.Socket
 import java.util.Collections
+import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.Semaphore
 import java.util.concurrent.atomic.AtomicReference
 import javax.crypto.CipherInputStream
@@ -65,6 +66,14 @@ class TcpMessagingManager(
     private val scope = CoroutineScope(Dispatchers.IO + SupervisorJob())
     private var serverJob: Job? = null
     private var queueDrainJob: Job? = null
+
+/**
+ * Message ids this process is currently sending from the drain queue. The worker
+ * polls on a timer, so without this a send slower than the poll interval would be
+ * started twice. It is in memory by design: after a restart nothing is in flight,
+ * and the startup sweep moves any leftover SENDING row to QUEUED.
+ */
+private val inFlightSends = ConcurrentHashMap.newKeySet<String>()
     private var serverSocket: ServerSocket? = null
     private val activeConversationId = AtomicReference<String?>(null)
     private val connectionSemaphore = Semaphore(MAX_CONCURRENT_CONNECTIONS)
@@ -159,7 +168,42 @@ class TcpMessagingManager(
         }
 
         for (msg in messages) {
-            val success = when {
+            // Skip a row this worker is already sending. The poll runs every few
+            // seconds, so a send slower than the interval would otherwise be
+            // started a second time and the peer would receive it twice. SENDING
+            // stays selectable because the legacy contract is that a failed send
+            // stays SENDING so the queue can retry it, so the in-flight set rather
+            // than the status column is what prevents a duplicate send.
+            if (!inFlightSends.add(msg.id)) continue
+
+            // QUEUED rows older than the auto-send window are left for the user.
+            if (msg.status == MessageStatus.QUEUED &&
+                !MessageStatus.shouldAutoSendQueued(msg.receivedAt)
+            ) {
+                inFlightSends.remove(msg.id)
+                continue
+            }
+
+            database.chatMessageDao().updateMessageStatus(msg.id, MessageStatus.SENDING)
+
+            val success = try {
+                sendPendingMessage(msg, peerId, ip, port)
+            } finally {
+                inFlightSends.remove(msg.id)
+            }
+
+            if (success) {
+                database.chatMessageDao().updateMessageStatus(msg.id, MessageStatus.SENT)
+            } else {
+                break
+            }
+        }
+    }
+
+    private suspend fun sendPendingMessage(
+        msg: ChatMessageEntity, peerId: String, ip: String, port: Int
+    ): Boolean {
+        return when {
                 msg.isPhoto && !msg.photoPath.isNullOrBlank() -> {
                     val file = File(msg.photoPath)
                     if (file.exists()) {
@@ -240,12 +284,6 @@ class TcpMessagingManager(
                     sendPacketDirect(ip, port, packet)
                 }
             }
-            if (success) {
-                database.chatMessageDao().updateMessageStatus(msg.id, MessageStatus.SENT)
-            } else {
-                break
-            }
-        }
     }
 
     private fun startServer() {

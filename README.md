@@ -65,8 +65,8 @@ LAN Chat is designed for that window:
   `read`, `failed`) so a message that did not go out is never shown as sent
 - Manual retry of a failed message, reusing the original message id
 - Pending sends persist in the database and are re-attempted when the peer comes
-  back. **This currently covers `sending` only**; messages that settle into
-  `queued` are not yet picked up again by the drain worker. See Known limitations.
+  back. A message in `queued` is sent automatically when its peer reappears within
+  the auto-send window; a message in `failed` waits for the user, by design.
 
 ### Connectivity
 
@@ -175,11 +175,6 @@ The following are real, known gaps:
 - **Mesh relay is not yet end-to-end encrypted.** Traffic relayed through Nearby
   is protected by the relay protocol, not yet by an independent pairwise
   end-to-end layer.
-- **The send queue does not yet cover `queued` messages.** The drain worker that
-  retries pending sends selects `sending` rows only, so a message that settles
-  into `queued` because the peer was unreachable stays `queued` and is not
-  re-attempted when that peer returns. A message in `failed` is deliberately not
-  retried automatically. This is being corrected on this branch.
 - **Not independently audited.** No third-party security review has been done.
 
 Do not rely on LAN Chat for communications where a compromise would put anyone

@@ -82,10 +82,10 @@ class MessageStatusSchemaTest {
                     assertNotNull("row $id survived the reopen", row)
                     assertEquals("$id kept its status", expected, row!!.status)
                 }
-                // The pending worker selects SENDING only, so it must pick up the
-                // one SENDING row and leave QUEUED, FAILED and SENT alone.
+                // The pending worker selects SENDING and QUEUED, and must leave
+                // FAILED and SENT alone. FAILED is terminal until the user retries.
                 val pending = dao.getAllPendingDirectMessages()
-                assertEquals(listOf("msg_sending"), pending.map { it.id })
+                assertEquals(listOf("msg_queued", "msg_sending"), pending.map { it.id })
             }
         } finally {
             room.close()

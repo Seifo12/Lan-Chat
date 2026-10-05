@@ -36,10 +36,17 @@ interface ChatMessageDao {
     @Query("UPDATE messages SET status = :status WHERE conversationId = :conversationId AND isFromMe = 0 AND status != 'READ'")
     suspend fun markIncomingMessagesAsRead(conversationId: String, status: MessageStatus = MessageStatus.READ)
 
-    @Query("SELECT * FROM messages WHERE conversationId = :conversationId AND isFromMe = 1 AND status = 'SENDING' ORDER BY receivedAt ASC, timestamp ASC")
+    /**
+     * Rows the drain worker may send. SENDING is a send in flight or a legacy
+     * stuck row; QUEUED is a message that could not go out because the peer was
+     * unreachable, which is the normal case for a LAN messenger and is retried
+     * automatically when the peer returns. FAILED is deliberately absent: it is
+     * terminal until the user asks for a retry.
+     */
+    @Query("SELECT * FROM messages WHERE conversationId = :conversationId AND isFromMe = 1 AND status IN ('SENDING', 'QUEUED') ORDER BY receivedAt ASC, timestamp ASC")
     suspend fun getPendingMessagesForConversation(conversationId: String): List<ChatMessageEntity>
 
-    @Query("SELECT * FROM messages WHERE isFromMe = 1 AND isGroup = 0 AND status = 'SENDING' ORDER BY receivedAt ASC, timestamp ASC")
+    @Query("SELECT * FROM messages WHERE isFromMe = 1 AND isGroup = 0 AND status IN ('SENDING', 'QUEUED') ORDER BY receivedAt ASC, timestamp ASC")
     suspend fun getAllPendingDirectMessages(): List<ChatMessageEntity>
 
     /**
