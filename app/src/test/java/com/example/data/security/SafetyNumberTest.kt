@@ -1,4 +1,7 @@
 package com.example.data.security
+import org.junit.runner.RunWith
+import org.robolectric.RobolectricTestRunner
+import org.robolectric.annotation.Config
 
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -25,6 +28,8 @@ import java.util.Base64
  * The grouping matters too. Five digits per group is sayable in one breath, and
  * grouping means a misread digit is caught rather than silently changing the code.
  */
+@RunWith(RobolectricTestRunner::class)
+@Config(sdk = [34])
 class SafetyNumberTest {
 
     @Test

@@ -2,7 +2,7 @@ package com.example.data.security
 
 import java.math.BigInteger
 import java.security.MessageDigest
-import java.util.Base64
+import android.util.Base64
 
 /**
  * Phase 1.7, audit finding C9, and R7: the code two people read to each other.
@@ -45,6 +45,8 @@ object SafetyNumber {
      */
     const val DOMAIN = "LanChat-safety-number-v1"
 
+    private const val HASH_BITS = 256
+
     private val TEN = BigInteger.TEN
     private val RANGE = TEN.pow(DIGITS)
 
@@ -56,7 +58,9 @@ object SafetyNumber {
      * the property should not depend on that.
      */
     private val UNBIASED_LIMIT: BigInteger = run {
-        val space = BigInteger.TWO.pow(256)
+        // BigInteger.TWO is API 33+. Writing the constant out keeps this callable
+        // on every supported device, which lint flagged and a JVM test could not.
+        val space = BigInteger.valueOf(2).pow(HASH_BITS)
         space.subtract(space.mod(RANGE))
     }
 
@@ -104,10 +108,21 @@ object SafetyNumber {
         // breaks outright, so a key wrapped by another implementation would
         // silently fall back to hashing its text and produce a different code.
         val compact = publicKeyBase64.filterNot { it.isWhitespace() }
-        val decoded = runCatching { Base64.getDecoder().decode(compact) }.getOrNull()
+        val decoded = runCatching { Base64.decode(compact, Base64.DEFAULT) }.getOrNull()
+        // Android's decoder is lenient where the JDK one refused outright, so a
+        // successful call is not proof the input was Base64. Re-encoding is cheap
+        // and is the only honest way to tell a real key from a string that merely
+        // decoded to something.
+        val roundTrips = decoded?.let {
+            Base64.encodeToString(it, Base64.NO_WRAP) == compact
+        } ?: false
         // A value that is not Base64 at all still has to hash deterministically,
         // so fall back to its bytes rather than failing.
-        return decoded?.takeIf { it.isNotEmpty() } ?: compact.toByteArray(Charsets.UTF_8)
+        return if (roundTrips && decoded.isNotEmpty()) {
+            decoded
+        } else {
+            compact.toByteArray(Charsets.UTF_8)
+        }
     }
 
     private fun domainPrefix(): ByteArray =
