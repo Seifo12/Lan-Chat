@@ -8,7 +8,8 @@ enum class PacketType {
     BEACON, BEACON_ACK, TEXT_MESSAGE, PHOTO_MESSAGE, VIDEO_MESSAGE,
     FILE_MESSAGE, VOICE_MESSAGE, ACK_DELIVERED, ACK_READ, GROUP_ANNOUNCE,
     CALL_OFFER, CALL_ANSWER, CALL_RINGING, CALL_END, MESH_RELAY,
-    APP_UPDATE_REQUEST, APP_UPDATE_RESPONSE, APP_UPDATE_CHUNK, TRANSFER_CANCEL
+    APP_UPDATE_REQUEST, APP_UPDATE_RESPONSE, APP_UPDATE_CHUNK, TRANSFER_CANCEL,
+    GROUP_INVITE
 }
 
 sealed class NetworkPacket(val type: PacketType) {
@@ -25,6 +26,7 @@ sealed class NetworkPacket(val type: PacketType) {
         private const val MAX_MESH_PAYLOAD_LENGTH = 500_000
         private const val MAX_VISITED_NODES = 30
         private const val MAX_RAW_INPUT_LENGTH = 2_500_000
+        private const val MAX_INVITE_JSON_LENGTH = 64_000
 
         private fun limitStr(value: String, max: Int): String = value.take(max)
 
@@ -254,6 +256,17 @@ sealed class NetworkPacket(val type: PacketType) {
                         senderId = limitStr(obj.getString("senderId"), MAX_ID_LENGTH),
                         reason = obj.optString("reason", "USER_CANCELLED").take(MAX_REASON_LENGTH),
                         timestamp = obj.optLong("timestamp", System.currentTimeMillis())
+                    )
+                    PacketType.GROUP_INVITE -> GroupInvitePacket(
+                        messageId = limitStr(obj.getString("messageId"), MAX_ID_LENGTH),
+                        senderId = limitStr(obj.getString("senderId"), MAX_ID_LENGTH),
+                        senderName = limitStr(obj.getString("senderName"), MAX_NAME_LENGTH),
+                        recipientId = limitStr(obj.getString("recipientId"), MAX_ID_LENGTH),
+                        inviteJson = limitStr(obj.getString("inviteJson"), MAX_INVITE_JSON_LENGTH),
+                        timestamp = obj.optLong("timestamp", System.currentTimeMillis()),
+                        signatureBase64 = optLimited(obj, "signatureBase64", 512),
+                        counter = obj.optLong("counter", 0),
+                        protocolVersion = obj.optInt("protocolVersion", 1)
                     )
                 }
             } catch (e: Exception) {
@@ -611,6 +624,33 @@ data class TransferCancelPacket(
         obj.put("type", type.name); obj.put("transferId", transferId)
         obj.put("senderId", senderId); obj.put("reason", reason)
         obj.put("timestamp", timestamp)
+        return obj.toString()
+    }
+}
+
+/**
+ * Phase 1.8: a signed group invitation (or membership update) for one
+ * recipient. Signed per recipient like every message, because recipientId is
+ * in the covered set; the invitation content itself is inviteJson, whose
+ * digest is computed under the invite label, never from a re-serialisation.
+ */
+data class GroupInvitePacket(
+    val messageId: String, val senderId: String, val senderName: String,
+    val recipientId: String, val inviteJson: String,
+    val timestamp: Long = System.currentTimeMillis(),
+    val signatureBase64: String? = null,
+    val counter: Long = 0,
+    val protocolVersion: Int = ProtocolVersion.CURRENT
+) : NetworkPacket(PacketType.GROUP_INVITE) {
+    override fun toJson(): String {
+        val obj = JSONObject()
+        obj.put("type", type.name); obj.put("messageId", messageId)
+        obj.put("senderId", senderId); obj.put("senderName", senderName)
+        obj.put("recipientId", recipientId); obj.put("inviteJson", inviteJson)
+        obj.put("timestamp", timestamp)
+        if (signatureBase64 != null) obj.put("signatureBase64", signatureBase64)
+        obj.put("counter", counter)
+        obj.put("protocolVersion", protocolVersion)
         return obj.toString()
     }
 }

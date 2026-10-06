@@ -27,7 +27,8 @@ class UserPreferences(private val context: Context) {
         private const val KEY_MESH_MODE_ENABLED = "key_mesh_mode_enabled"
     }
 
-    val appVersionCode: Int = 2
+    /** Phase 1.8: what this build advertises in beacons. Peers read it as last-seen version. */
+    val appVersionCode: Int = 3
     val appVersionName: String = "2.0.0"
 
     val deviceId: String

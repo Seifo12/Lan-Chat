@@ -9,10 +9,15 @@ package com.example.data.network
  *
  * The design is explicit that an old client is never dropped silently: a refusal
  * has to say why, so [MINIMUM] is paired with a notice the user can act on.
+ *
+ * Phase 1.8: version 3 adds signed group invitations and group-bound message
+ * digests. MINIMUM stays 2 so old peers keep chatting; anything that needs
+ * version 3 is refused toward a v2 peer before sending, with the update
+ * notice, instead of vanishing into the silent drop unknown types get.
  */
 object ProtocolVersion {
     /** What this build sends. */
-    const val CURRENT = 2
+    const val CURRENT = 3
 
     /**
      * The oldest peer we will talk to. Anything below this is refused, because
