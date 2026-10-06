@@ -260,12 +260,27 @@ class TcpMessagingSendResultTest {
         // Phase 1.2: the send path resolves the recipient's public key from the
         // database, so the contact must be stored there as well as passed in.
         database.contactDao().insertOrUpdateContact(onlineContact)
+        // Phase 1.8: fan-out resolves members from the database, so the group
+        // and the membership must exist too; the contact list is no longer an
+        // argument at all.
+        database.groupDao().insertOrUpdateGroup(
+            com.example.data.local.GroupEntity(
+                groupId = "group_1", groupName = "Team", createdBy = "me",
+                creatorDeviceId = "me", isLegacy = false,
+            )
+        )
+        database.groupMembershipDao().replaceMembers(
+            "group_1",
+            listOf(
+                com.example.data.local.GroupMemberEntity(
+                    "group_1", "peer_lan", onlineContact.publicKeyBase64!!, "Peer"
+                )
+            )
+        )
 
         val result = manager.sendGroupTextMessage(
             groupId = "group_1",
-            groupName = "Team",
             text = "group hello",
-            contacts = listOf(onlineContact)
         )
 
         awaitPeer("the group text packet to arrive", livePeer.receivedPackets, 1)
@@ -284,12 +299,25 @@ class TcpMessagingSendResultTest {
             tcpPort = closedPort(),
             isOnline = false
         )
+        database.contactDao().insertOrUpdateContact(offlineContact)
+        database.groupDao().insertOrUpdateGroup(
+            com.example.data.local.GroupEntity(
+                groupId = "group_1", groupName = "Team", createdBy = "me",
+                creatorDeviceId = "me", isLegacy = false,
+            )
+        )
+        database.groupMembershipDao().replaceMembers(
+            "group_1",
+            listOf(
+                com.example.data.local.GroupMemberEntity(
+                    "group_1", "peer_offline", "", "Peer"
+                )
+            )
+        )
 
         val result = manager.sendGroupTextMessage(
             groupId = "group_1",
-            groupName = "Team",
             text = "nobody home",
-            contacts = listOf(offlineContact)
         )
 
         assertTrue("nobody received the message", result.isFailure)
@@ -338,13 +366,27 @@ class TcpMessagingSendResultTest {
         // Phase 1.2: the send path resolves the recipient's public key from the
         // database, so the contact must be stored there as well as passed in.
         database.contactDao().insertOrUpdateContact(onlineContact)
+        // Phase 1.8: see the group text test above.
+        database.groupDao().insertOrUpdateGroup(
+            com.example.data.local.GroupEntity(
+                groupId = "group_1", groupName = "Team", createdBy = "me",
+                creatorDeviceId = "me", isLegacy = false,
+            )
+        )
+        database.groupMembershipDao().replaceMembers(
+            "group_1",
+            listOf(
+                com.example.data.local.GroupMemberEntity(
+                    "group_1", "peer_lan", onlineContact.publicKeyBase64!!, "Peer"
+                )
+            )
+        )
 
         val result = manager.sendGroupPhotoMessage(
             groupId = "group_1",
             groupName = "Team",
             localPhotoPath = file.absolutePath,
             caption = "team pic",
-            contacts = listOf(onlineContact)
         )
 
         awaitPeer("the group photo stream to arrive", livePeer.streamedFiles, 1)

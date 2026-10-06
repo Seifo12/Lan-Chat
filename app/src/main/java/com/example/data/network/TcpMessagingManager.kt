@@ -5,7 +5,9 @@ import android.util.Log
 import com.example.data.local.ChatDatabase
 import com.example.data.local.ChatMessageEntity
 import com.example.data.local.ContactEntity
+import com.example.data.local.GroupEntity
 import com.example.data.local.GroupInviteReceiver
+import com.example.data.local.GroupMemberEntity
 import com.example.data.local.MessageStatus
 import com.example.data.local.canReceiveGroupMessage
 import com.lanchat.offline.messenger.R
@@ -1100,14 +1102,18 @@ private val messageCounters: MessageCounters by lazy { MessageCounters(database.
     // ---------- group senders ----------
 
     suspend fun sendGroupTextMessage(
-        groupId: String, groupName: String, text: String, contacts: List<ContactEntity>
+        groupId: String, text: String
     ): Result<ChatMessageEntity> = withContext(Dispatchers.IO) {
+        val group = sendableGroup(groupId)
+            ?: return@withContext Result.failure(
+                java.io.IOException("group unavailable: unknown or legacy")
+            )
         val messageId = "grp_msg_${System.currentTimeMillis()}_${userPreferences.deviceId.take(4)}"
         val entity = ChatMessageEntity(
             id = messageId, conversationId = groupId, senderId = userPreferences.deviceId,
             senderName = userPreferences.displayName, recipientId = groupId, text = text,
             isPhoto = false, timestamp = System.currentTimeMillis(), isFromMe = true,
-            status = MessageStatus.SENT, isGroup = true, groupName = groupName,
+            status = MessageStatus.SENT, isGroup = true, groupName = group.groupName,
             isSenderDeveloper = userPreferences.isDeveloper
         )
         database.chatMessageDao().insertMessage(entity)
@@ -1115,19 +1121,23 @@ private val messageCounters: MessageCounters by lazy { MessageCounters(database.
         // Phase 1.3: the signed field set contains the recipient and the counter,
         // so a group send cannot reuse one packet across peers. Each leg is signed
         // separately for the peer it is going to, with its own counter.
-        val delivered = fanOutToGroup(contacts) { peer ->
-            val signed = signForRecipient(
+        // Phase 1.8: legs go to current members only, and the digest binds the
+        // group, so a signed message cannot move between groups.
+        val delivered = fanOutToGroup(GroupFanout.resolve(database, groupId)) { peer ->
+            val signed = signForRecipientWithDigest(
                 recipientId = peer.deviceId,
                 messageId = messageId,
                 timestamp = entity.timestamp,
-                content = text.toByteArray(Charsets.UTF_8),
+                contentDigestHex = GroupInviteCodec.groupMessageDigestHex(
+                    groupId, text.toByteArray(Charsets.UTF_8)
+                ),
             ) ?: return@fanOutToGroup false
             sendPacketDirect(
                 peer.ipAddress, peer.tcpPort,
                 TextMessagePacket(
                     messageId = messageId, senderId = userPreferences.deviceId,
                     senderName = userPreferences.displayName, recipientId = groupId, text = text,
-                    isGroup = true, groupId = groupId, groupName = groupName,
+                    isGroup = true, groupId = groupId, groupName = group.groupName,
                     isDeveloper = userPreferences.isDeveloper, timestamp = entity.timestamp,
                     signatureBase64 = signed.second, counter = signed.first
                 ),
@@ -1140,6 +1150,134 @@ private val messageCounters: MessageCounters by lazy { MessageCounters(database.
         } else {
             groupFanoutFailure(messageId, entity)
         }
+    }
+
+    /**
+     * Phase 1.8: one invitation leg to one peer. Refused before sending when
+     * the peer cannot receive it: a v2 client drops the new type silently, so
+     * it gets the update notice instead, and a changed key stays blocked.
+     * Returns whether the packet went out.
+     */
+    suspend fun sendGroupInviteMessage(
+        peer: ContactEntity,
+        invite: GroupInviteCodec.Invite,
+    ): Boolean = withContext(Dispatchers.IO) {
+        if (!GroupFanout.requirePeerV3(peer)) {
+            notePeerNeedsUpdate(peer.deviceId, peer.deviceId, peer.displayName)
+            return@withContext false
+        }
+        if (keyChangeBlocks(peer.deviceId)) return@withContext false
+        val inviteJson = GroupInviteCodec.buildCanonical(invite)
+        val messageId = "grp_inv_${System.currentTimeMillis()}_${userPreferences.deviceId.take(4)}"
+        val timestamp = System.currentTimeMillis()
+        val signed = signForRecipientWithDigest(
+            recipientId = peer.deviceId,
+            messageId = messageId,
+            timestamp = timestamp,
+            contentDigestHex = GroupInviteCodec.contentDigestHex(
+                inviteJson.toByteArray(Charsets.UTF_8)
+            ),
+        ) ?: return@withContext false
+        sendPacketDirect(
+            peer.ipAddress, peer.tcpPort,
+            GroupInvitePacket(
+                messageId = messageId, senderId = userPreferences.deviceId,
+                senderName = userPreferences.displayName, recipientId = peer.deviceId,
+                inviteJson = inviteJson, timestamp = timestamp,
+                signatureBase64 = signed.second, counter = signed.first,
+                protocolVersion = ProtocolVersion.CURRENT,
+            ),
+            peer.deviceId,
+        )
+    }
+
+    /**
+     * Phase 1.8: creates the group row and the roster, then invites each
+     * chosen member. The creator never needs an invitation to their own group.
+     * Invite delivery is best-effort per peer like every other send; the
+     * roster is authoritative regardless of which legs arrive.
+     */
+    suspend fun createSecuredGroup(
+        name: String,
+        description: String,
+        avatarColorIndex: Int,
+        memberIds: List<String>,
+    ): GroupEntity? = withContext(Dispatchers.IO) {
+        if (name.isBlank()) return@withContext null
+        val me = userPreferences.deviceId
+        val myKey = EncryptionManager.getPairwiseManager()?.getMyPublicKeyBase64()
+            ?: return@withContext null
+        val now = System.currentTimeMillis()
+        val groupId = GroupInviteCodec.newGroupId()
+        database.groupDao().insertOrUpdateGroup(
+            GroupEntity(
+                groupId = groupId, groupName = name.trim(), description = description.trim(),
+                createdBy = userPreferences.displayName, createdAt = now,
+                avatarColorIndex = avatarColorIndex, creatorDeviceId = me,
+                memberListVersion = 1L, isLegacy = false,
+            )
+        )
+        val members = buildList {
+            add(
+                GroupMemberEntity(
+                    groupId, me, myKey, userPreferences.displayName, now
+                )
+            )
+            for (id in memberIds.distinct().filter { it != me }) {
+                val contact = database.contactDao().getContactById(id) ?: continue
+                val key = contact.publicKeyBase64 ?: continue
+                add(GroupMemberEntity(groupId, id, key, contact.displayName, now))
+            }
+        }
+        database.groupMembershipDao().replaceMembers(groupId, members)
+        val invite = GroupInviteCodec.Invite(
+            creatorId = me, groupId = groupId, groupName = name.trim(),
+            description = description.trim(),
+            members = members.map {
+                GroupInviteCodec.Member(it.deviceId, it.publicKeyBase64, it.displayName)
+            },
+            memberListVersion = 1L,
+            nonce = GroupInviteCodec.newNonce(),
+            expiry = now + GroupInviteCodec.INVITE_TTL_MS,
+        )
+        for (id in memberIds.distinct().filter { it != me }) {
+            val peer = database.contactDao().getContactById(id) ?: continue
+            sendGroupInviteMessage(peer, invite)
+        }
+        database.groupDao().getGroupById(groupId)
+    }
+
+    /**
+     * Phase 1.8: publishes the current roster at a higher version. Only the
+     * creator may do this; anyone else's update would be refused on receipt
+     * anyway, so refusing to send it is the honest behaviour.
+     */
+    suspend fun sendMembershipUpdate(groupId: String): Boolean = withContext(Dispatchers.IO) {
+        val group = database.groupDao().getGroupById(groupId)
+            ?: return@withContext false
+        if (group.isLegacy || group.creatorDeviceId != userPreferences.deviceId) {
+            return@withContext false
+        }
+        val now = System.currentTimeMillis()
+        val version = group.memberListVersion + 1
+        database.groupDao().insertOrUpdateGroup(group.copy(memberListVersion = version))
+        val members = database.groupMembershipDao().membersOf(groupId)
+        val invite = GroupInviteCodec.Invite(
+            creatorId = userPreferences.deviceId, groupId = groupId,
+            groupName = group.groupName, description = group.description,
+            members = members.map {
+                GroupInviteCodec.Member(it.deviceId, it.publicKeyBase64, it.displayName)
+            },
+            memberListVersion = version,
+            nonce = GroupInviteCodec.newNonce(),
+            expiry = now + GroupInviteCodec.INVITE_TTL_MS,
+        )
+        var sent = 0
+        for (peer in GroupFanout.resolve(database, groupId)) {
+            if (peer.deviceId == userPreferences.deviceId) continue
+            if (sendGroupInviteMessage(peer, invite)) sent++
+        }
+        sent > 0
     }
 
     suspend fun sendPhotoMessage(
@@ -1180,8 +1318,12 @@ private val messageCounters: MessageCounters by lazy { MessageCounters(database.
 
     suspend fun sendGroupPhotoMessage(
         groupId: String, groupName: String, localPhotoPath: String,
-        caption: String = "", contacts: List<ContactEntity>
+        caption: String = ""
     ): Result<ChatMessageEntity> = withContext(Dispatchers.IO) {
+        val sendable = sendableGroup(groupId)
+            ?: return@withContext Result.failure(
+                java.io.IOException("group unavailable: unknown or legacy")
+            )
         val messageId = "grp_photo_${System.currentTimeMillis()}_${userPreferences.deviceId.take(4)}"
         val file = File(localPhotoPath)
         val actualSize = if (file.exists()) file.length() else 0L
@@ -1196,7 +1338,7 @@ private val messageCounters: MessageCounters by lazy { MessageCounters(database.
         database.chatMessageDao().insertMessage(entity)
 
         val delivered = if (file.exists()) {
-            fanOutToGroup(contacts) { peer ->
+            fanOutToGroup(GroupFanout.resolve(database, groupId)) { peer ->
                 streamFileDirect(
                     targetIp = peer.ipAddress, targetPort = peer.tcpPort,
                     transferId = "xfer_${messageId}_${peer.deviceId.take(4)}",
@@ -1459,8 +1601,12 @@ private val messageCounters: MessageCounters by lazy { MessageCounters(database.
 
     suspend fun sendGroupVideoMessage(
         groupId: String, groupName: String, localFilePath: String, fileName: String,
-        fileSize: Long, mimeType: String, caption: String = "", contacts: List<ContactEntity>
+        fileSize: Long, mimeType: String, caption: String = ""
     ): Result<ChatMessageEntity> = withContext(Dispatchers.IO) {
+        val sendable = sendableGroup(groupId)
+            ?: return@withContext Result.failure(
+                java.io.IOException("group unavailable: unknown or legacy")
+            )
         val messageId = "grp_vid_${System.currentTimeMillis()}_${userPreferences.deviceId.take(4)}"
         val file = File(localFilePath)
         val actualSize = if (file.exists()) file.length() else fileSize
@@ -1473,7 +1619,7 @@ private val messageCounters: MessageCounters by lazy { MessageCounters(database.
             isGroup = true, groupName = groupName, isSenderDeveloper = userPreferences.isDeveloper
         )
         database.chatMessageDao().insertMessage(entity)
-        val delivered = fanOutToGroup(contacts) { peer ->
+        val delivered = fanOutToGroup(GroupFanout.resolve(database, groupId)) { peer ->
             streamFileDirect(
                 targetIp = peer.ipAddress, targetPort = peer.tcpPort,
                 transferId = "xfer_${messageId}_${peer.deviceId.take(4)}",
@@ -1532,8 +1678,12 @@ private val messageCounters: MessageCounters by lazy { MessageCounters(database.
 
     suspend fun sendGroupDocFileMessage(
         groupId: String, groupName: String, localFilePath: String, fileName: String,
-        fileSize: Long, mimeType: String, caption: String = "", contacts: List<ContactEntity>
+        fileSize: Long, mimeType: String, caption: String = ""
     ): Result<ChatMessageEntity> = withContext(Dispatchers.IO) {
+        val sendable = sendableGroup(groupId)
+            ?: return@withContext Result.failure(
+                java.io.IOException("group unavailable: unknown or legacy")
+            )
         val messageId = "grp_file_${System.currentTimeMillis()}_${userPreferences.deviceId.take(4)}"
         val file = File(localFilePath)
         val actualSize = if (file.exists()) file.length() else fileSize
@@ -1547,7 +1697,7 @@ private val messageCounters: MessageCounters by lazy { MessageCounters(database.
             isGroup = true, groupName = groupName, isSenderDeveloper = userPreferences.isDeveloper
         )
         database.chatMessageDao().insertMessage(entity)
-        val delivered = fanOutToGroup(contacts) { peer ->
+        val delivered = fanOutToGroup(GroupFanout.resolve(database, groupId)) { peer ->
             streamFileDirect(
                 targetIp = peer.ipAddress, targetPort = peer.tcpPort,
                 transferId = "xfer_${messageId}_${peer.deviceId.take(4)}",
@@ -1660,9 +1810,12 @@ private val messageCounters: MessageCounters by lazy { MessageCounters(database.
     }
 
     suspend fun sendGroupVoiceMessage(
-        groupId: String, groupName: String, voiceFile: File, durationSeconds: Int,
-        contacts: List<ContactEntity>
+        groupId: String, groupName: String, voiceFile: File, durationSeconds: Int
     ): Result<ChatMessageEntity> = withContext(Dispatchers.IO) {
+        val sendable = sendableGroup(groupId)
+            ?: return@withContext Result.failure(
+                java.io.IOException("group unavailable: unknown or legacy")
+            )
         val messageId = "grp_voice_${System.currentTimeMillis()}_${userPreferences.deviceId.take(4)}"
         val entity = ChatMessageEntity(
             id = messageId, conversationId = groupId, senderId = userPreferences.deviceId,
@@ -1680,7 +1833,7 @@ private val messageCounters: MessageCounters by lazy { MessageCounters(database.
             android.util.Base64.encodeToString(bytes, android.util.Base64.NO_WRAP)
         } else ""
 
-        val delivered = fanOutToGroup(contacts) { peer ->
+        val delivered = fanOutToGroup(GroupFanout.resolve(database, groupId)) { peer ->
             // Nearby بحدّ الـ BYTES payload بحوالي 32KB، فأي تسجيل بيتسلّم عبر
             // MESH لازم ينزل stream. base64 جوّه JSON كان بيرمي في Payload.fromBytes
             // والرسالة كانت بتضيع بصمت.
@@ -1851,6 +2004,24 @@ private val messageCounters: MessageCounters by lazy { MessageCounters(database.
         messageId: String,
         timestamp: Long,
         content: ByteArray,
+    ): Pair<Long, String?>? = signForRecipientWithDigest(
+        recipientId = recipientId,
+        messageId = messageId,
+        timestamp = timestamp,
+        contentDigestHex = MessageSigningPayload.digestHex(content),
+    )
+
+    /**
+     * Phase 1.8: same claiming and signing, but the digest is supplied by the
+     * caller. Invitations and group-bound messages hash under their own labels
+     * rather than the plain content digest, and that choice belongs with the
+     * packet being built rather than inside the shared primitive.
+     */
+    private suspend fun signForRecipientWithDigest(
+        recipientId: String,
+        messageId: String,
+        timestamp: Long,
+        contentDigestHex: String,
     ): Pair<Long, String?>? {
         val counter = messageCounters.claimOutgoing(recipientId) ?: return null
         val signature = MessageSigningPayload.sign(
@@ -1860,10 +2031,21 @@ private val messageCounters: MessageCounters by lazy { MessageCounters(database.
                 messageId = messageId,
                 timestamp = timestamp,
                 counter = counter,
-                contentDigestHex = MessageSigningPayload.digestHex(content),
+                contentDigestHex = contentDigestHex,
             )
         ) ?: return null
         return counter to signature
+    }
+
+    /**
+     * Phase 1.8: the group this device may send into, or null. Missing rows
+     * and legacy rows both refuse: a legacy group is readable history, and the
+     * recreate action (not the send path) is what explains that to the user.
+     */
+    private suspend fun sendableGroup(groupId: String): GroupEntity? {
+        val group = database.groupDao().getGroupById(groupId) ?: return null
+        if (group.isLegacy) return null
+        return group
     }
 
     /**

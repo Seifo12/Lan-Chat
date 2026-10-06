@@ -575,6 +575,76 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
+    // ----- Phase 1.8: secured groups -----
+
+    /** Invitations waiting for an explicit decision. The UI interrupts with these. */
+    val pendingGroupInvites: kotlinx.coroutines.flow.Flow<List<com.example.data.local.GroupInviteEntity>> =
+        database.groupMembershipDao().pendingInvites()
+
+    /**
+     * Creates the group row and the roster, then invites each chosen member.
+     * Returns the group, or null when it could not be created. Member
+     * selection is the caller's business; this function never invents members.
+     */
+    fun createSecuredGroup(
+        name: String,
+        description: String = "",
+        avatarColorIndex: Int = 0,
+        memberIds: List<String>,
+        onDone: (com.example.data.local.GroupEntity?) -> Unit = {},
+    ) {
+        viewModelScope.launch(Dispatchers.IO) {
+            onDone(tcpMessaging.createSecuredGroup(name, description, avatarColorIndex, memberIds))
+        }
+    }
+
+    /** The accept tap. The only writer of membership from an invitation. */
+    fun acceptGroupInvite(groupId: String, nonce: String) {
+        viewModelScope.launch(Dispatchers.IO) {
+            com.example.data.local.GroupInviteReceiver(database, userPrefs)
+                .acceptInvite(groupId, nonce)
+        }
+    }
+
+    fun declineGroupInvite(groupId: String, nonce: String) {
+        viewModelScope.launch(Dispatchers.IO) {
+            com.example.data.local.GroupInviteReceiver(database, userPrefs)
+                .declineInvite(groupId, nonce)
+        }
+    }
+
+    /** Leaving is local only and needs no packet. */
+    fun leaveGroup(groupId: String) {
+        viewModelScope.launch(Dispatchers.IO) {
+            com.example.data.local.GroupInviteReceiver(database, userPrefs)
+                .leaveGroup(groupId)
+        }
+    }
+
+    /**
+     * A legacy group cannot become secured: history stays readable and
+     * unwritable, and recreation mints a fresh random id with a chosen roster.
+     */
+    fun recreateLegacyGroup(
+        groupId: String,
+        memberIds: List<String>,
+        onDone: (com.example.data.local.GroupEntity?) -> Unit = {},
+    ) {
+        viewModelScope.launch(Dispatchers.IO) {
+            val legacy = database.groupDao().getGroupById(groupId)
+            if (legacy == null || !legacy.isLegacy) {
+                onDone(null)
+                return@launch
+            }
+            onDone(
+                tcpMessaging.createSecuredGroup(
+                    legacy.groupName, legacy.description,
+                    legacy.avatarColorIndex, memberIds
+                )
+            )
+        }
+    }
+
     fun buildMyQrPayload(): String? {
         val myKey = com.example.data.security.EncryptionManager.getPairwiseManager()
             ?.getMyPublicKeyBase64() ?: return null
@@ -901,13 +971,11 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
                     _errorMessage.value = "تعذر إرسال التسجيل الصوتي."
                 }
             } else if (group != null) {
-                val currentContacts = contacts.value
                 tcpMessaging.sendGroupVoiceMessage(
                     groupId = group.groupId,
                     groupName = group.groupName,
                     voiceFile = file,
-                    durationSeconds = durationSeconds,
-                    contacts = currentContacts
+                    durationSeconds = durationSeconds
                 )
             }
             _isSending.value = false
@@ -959,12 +1027,9 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
         } else if (group != null) {
             viewModelScope.launch {
                 _isSending.value = true
-                val currentContacts = contacts.value
                 tcpMessaging.sendGroupTextMessage(
                     groupId = group.groupId,
-                    groupName = group.groupName,
-                    text = text.trim(),
-                    contacts = currentContacts
+                    text = text.trim()
                 )
                 _isSending.value = false
             }
@@ -991,13 +1056,11 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
                         _errorMessage.value = "تعذر إرسال الصورة."
                     }
                 } else if (group != null) {
-                    val currentContacts = contacts.value
                     tcpMessaging.sendGroupPhotoMessage(
                         groupId = group.groupId,
                         groupName = group.groupName,
                         localPhotoPath = localFile.absolutePath,
-                        caption = caption,
-                        contacts = currentContacts
+                        caption = caption
                     )
                 }
             } else {
@@ -1027,13 +1090,11 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
                         _errorMessage.value = "تعذر إرسال الصورة."
                     }
                 } else if (group != null) {
-                    val currentContacts = contacts.value
                     tcpMessaging.sendGroupPhotoMessage(
                         groupId = group.groupId,
                         groupName = group.groupName,
                         localPhotoPath = localFile.absolutePath,
-                        caption = caption,
-                        contacts = currentContacts
+                        caption = caption
                     )
                 }
             }
@@ -1065,7 +1126,6 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
                         _errorMessage.value = "تعذر إرسال الفيديو."
                     }
                 } else if (group != null) {
-                    val currentContacts = contacts.value
                     tcpMessaging.sendGroupVideoMessage(
                         groupId = group.groupId,
                         groupName = group.groupName,
@@ -1073,8 +1133,7 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
                         fileName = meta.fileName,
                         fileSize = localFile.length(),
                         mimeType = meta.mimeType ?: "video/mp4",
-                        caption = caption,
-                        contacts = currentContacts
+                        caption = caption
                     )
                 }
             }
@@ -1105,7 +1164,6 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
                             caption = caption
                         )
                     } else if (group != null) {
-                        val currentContacts = contacts.value
                         tcpMessaging.sendGroupVideoMessage(
                             groupId = group.groupId,
                             groupName = group.groupName,
@@ -1113,8 +1171,7 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
                             fileName = meta.fileName,
                             fileSize = localFile.length(),
                             mimeType = meta.mimeType ?: "video/mp4",
-                            caption = caption,
-                            contacts = currentContacts
+                            caption = caption
                         )
                     }
                 } else {
@@ -1130,7 +1187,6 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
                             caption = caption
                         )
                     } else if (group != null) {
-                        val currentContacts = contacts.value
                         tcpMessaging.sendGroupDocFileMessage(
                             groupId = group.groupId,
                             groupName = group.groupName,
@@ -1138,8 +1194,7 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
                             fileName = meta.fileName,
                             fileSize = localFile.length(),
                             mimeType = meta.mimeType ?: "*/*",
-                            caption = caption,
-                            contacts = currentContacts
+                            caption = caption
                         )
                     }
                 }
