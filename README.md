@@ -193,6 +193,11 @@ The following are real, known gaps:
   keys, and a send needs the recipient's key to derive a shared secret. A contact
   row that has never completed pairing has no key, so sends to it are refused.
   This is intended, but it does mean legacy contacts must be re-paired.
+- **There is no way to verify a contact yet.** The safety code itself is
+  implemented and is thirty digits read aloud, which is long enough that nobody can
+  manufacture a match. But no screen displays it, so the app cannot yet ask you to
+  confirm who you are talking to. Until it does, every contact is unverified in
+  practice regardless of what the code is capable of.
 - **A changed key blocks sending until you accept it.** Each contact keeps the key
   you pinned when you added it. If the peer later presents a different key,
   nothing is sent to it and the contact is flagged, rather than the new key being
@@ -311,7 +316,7 @@ per clone with:
 git config core.hooksPath scripts/hooks
 ```
 
-Current state: **298 unit tests, 0 failures**, lint clean.
+Current state: **305 unit tests, 0 failures**, lint clean.
 
 ---
 

@@ -132,18 +132,14 @@ class PairwiseSessionManager(private val context: Context) {
         }
     }
 
-    fun getSecurityFingerprint(publicKeyBase64: String): String {
-        return try {
-            val md = MessageDigest.getInstance("SHA-256")
-            val hash = md.digest(publicKeyBase64.toByteArray(Charsets.UTF_8))
-            val code = ((hash[0].toInt() and 0xFF) shl 16 or
-                    ((hash[1].toInt() and 0xFF) shl 8) or
-                    (hash[2].toInt() and 0xFF)) % 1000000
-            String.format(java.util.Locale.US, "%06d", Math.abs(code))
-        } catch (_: Exception) {
-            "000000"
-        }
-    }
+    /**
+     * Phase 1.7 removed the six digit security fingerprint.
+     *
+     * Six digits is about 20 bits. An attacker generates keys until one produces
+     * the digits a victim reads out, and finds a collision in a fraction of a
+     * second, which defeats the entire check. [SafetyNumber] produces thirty
+     * digits for the same reason and is what the app uses now.
+     */
 
     /**
      * حساب كود أمان موحد (Safety Number) لمطابقته بين الطرفين لمنع هجمات الوسيط (MITM)
@@ -156,19 +152,16 @@ class PairwiseSessionManager(private val context: Context) {
      */
     fun peerPublicKeyFor(peerDeviceId: String): String? = peerPublicKeysCache[peerDeviceId]
 
+    /**
+     * The code to read aloud to confirm a peer, or null when we hold no key for
+     * them. Phase 1.7: this delegates to [SafetyNumber] rather than deriving its
+     * own six digits.
+     */
     fun getCombinedFingerprint(peerDeviceId: String): String? {
         val peerPub = peerPublicKeysCache[peerDeviceId] ?: return null
-        val myPub = getMyPublicKeyBase64()
-        val combined = listOf(myPub, peerPub).sorted().joinToString("|")
-        return try {
-            val md = MessageDigest.getInstance("SHA-256")
-            val hash = md.digest(combined.toByteArray(Charsets.UTF_8))
-            val part1 = Math.abs(((hash[0].toInt() and 0xFF) shl 16) or ((hash[1].toInt() and 0xFF) shl 8) or (hash[2].toInt() and 0xFF)) % 1000000
-            val part2 = Math.abs(((hash[3].toInt() and 0xFF) shl 16) or ((hash[4].toInt() and 0xFF) shl 8) or (hash[5].toInt() and 0xFF)) % 1000000
-            String.format(java.util.Locale.US, "%06d %06d", part1, part2)
-        } catch (_: Exception) {
-            null
-        }
+        // Phase 1.7: thirty digits, not twelve. This used to take two six digit
+        // slices of the digest, which is about 40 bits and grindable in minutes.
+        return SafetyNumber.fromKeys(getMyPublicKeyBase64(), peerPub)
     }
 
     fun registerPeerPublicKey(peerDeviceId: String, peerPublicKeyBase64: String) {
