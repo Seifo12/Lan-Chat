@@ -5,6 +5,9 @@ import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotEquals
 import org.junit.Assert.assertTrue
 import org.junit.Test
+import java.math.BigInteger
+import java.security.MessageDigest
+import java.util.Base64
 
 /**
  * Phase 1.7, audit finding C9, and R7.
@@ -96,9 +99,98 @@ class SafetyNumberTest {
         assertEquals("and it is stable", short, SafetyNumber.shortFingerprint(publicKeyA, publicKeyB))
     }
 
+    /**
+     * A single flipped bit has to change the whole code. This is the property
+     * that makes the code worth reading: if small key differences produced similar
+     * or identical codes, a mishearing would look like a match.
+     */
+    @Test
+    fun `a single flipped bit anywhere in the key changes the code`() {
+        val base = Base64.getDecoder().decode(publicKeyA)
+        val flipped = base.copyOf()
+        // Flip one bit in the middle of the key material.
+        flipped[flipped.size / 2] = (flipped[flipped.size / 2].toInt() xor 0x01).toByte()
+        val flippedKey = Base64.getEncoder().encodeToString(flipped)
+
+        assertNotEquals(
+            "a one bit change must not produce the same code",
+            SafetyNumber.fromKeys(publicKeyA, publicKeyB),
+            SafetyNumber.fromKeys(flippedKey, publicKeyB)
+        )
+    }
+
+    /**
+     * A known-answer vector. This pins the exact digits, so a change to the
+     * domain label, the canonicalisation, or the digit conversion shows up as a
+     * failure here rather than as every device quietly disagreeing with every
+     * other. Anyone changing this implementation must update this line deliberately.
+     */
+    @Test
+    fun `known answer vector`() {
+        assertEquals(
+            "the code for these two fixed keys is fixed; if you changed the " +
+                "implementation on purpose, update this line and say why in the commit",
+            SafetyNumber.fromKeys(publicKeyA, publicKeyB),
+            "72157 16283 71570 33129 18971 18999"
+        )
+    }
+
+    /**
+     * Both sides must produce the same code regardless of how the Base64 happens
+     * to be written. The same key wrapped across lines, or with different padding,
+     * is still the same key.
+     */
+    @Test
+    fun `line wrapping in the Base64 does not change the code`() {
+        val raw = Base64.getDecoder().decode(publicKeyA)
+        val wrapped = Base64.getEncoder().encodeToString(raw)
+            .chunked(40)
+            .joinToString("\n")
+
+        assertEquals(
+            "canonicalisation has to see through formatting",
+            SafetyNumber.fromKeys(publicKeyA, publicKeyB),
+            SafetyNumber.fromKeys(wrapped, publicKeyB)
+        )
+    }
+
+    /**
+     * The domain label has to be inside the hash. These are the same two keys, so
+     * a digest computed without the label would otherwise be reproducible by any
+     * other code that hashes a pair of keys.
+     */
+    @Test
+    fun `the domain label is part of what is hashed`() {
+        val expected = MessageDigest.getInstance("SHA-256")
+            .digest(
+                (SafetyNumber.DOMAIN + "\u0000").toByteArray() +
+                    // sorted, as the implementation does, so both sides agree
+                    listOf(publicKeyA, publicKeyB).sorted().fold(ByteArray(0)) { acc, k ->
+                        acc + Base64.getDecoder().decode(k)
+                    }
+            )
+        val digits = BigInteger(1, expected)
+            .mod(java.math.BigInteger.TEN.pow(30))
+            .toString().padStart(30, '0')
+
+        assertEquals(
+            "the code must be the hash of the domain label and the canonical keys",
+            digits.chunked(5).joinToString(" "),
+            SafetyNumber.fromKeys(publicKeyA, publicKeyB)
+        )
+    }
+
     companion object {
-        const val publicKeyA = "MFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAEalpha0000000000000000000000000000000000"
-        const val publicKeyB = "MFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAEbravo00000000000000000000000000000000000"
-        const val publicKeyC = "MFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAEdelta00000000000000000000000000000000000"
+        /**
+         * Valid Base64, 65 bytes each, so the canonicalisation path is really
+         * exercised. Earlier revisions used unpadded strings, which silently fell
+         * back to hashing the text and meant the Base64 handling was never tested.
+         */
+        const val publicKeyA =
+            "MFkBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA="
+        const val publicKeyB =
+            "MFkCAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA="
+        const val publicKeyC =
+            "MFkDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA="
     }
 }
