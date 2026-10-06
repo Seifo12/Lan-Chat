@@ -182,10 +182,14 @@ The following are real, known gaps:
   silent: a system message appears in the conversation saying the peer needs to
   update. Mixed-version deployments will not exchange messages until both sides
   are current.
-- **Photo, video and file packets are not yet signature-enforced.** Text and voice
-  messages go through the full verification path. The larger media paths still
-  carry a signature, but only the text and mesh-text paths refuse a packet that
-  fails it. Extending enforcement to them is outstanding.
+- **Only text messages are signature-enforced.** Direct text over TCP and text
+  over mesh go through the full verification path: a missing signature, a bad
+  signature, an unknown sender, an old protocol version, a duplicate, and a
+  counter outside the window are all refused before the database. Voice,
+  photo, video and file packets are stored without verification on every
+  transport, mesh included. Saying "text and voice" here used to be wrong and
+  is corrected: voice was never checked. Extending enforcement to them is
+  outstanding.
 - **`EncryptionManager` holds a process-wide static identity manager.** That is
   correct for a single Android process, but it means tests must not sign through
   it when they intend to verify against a specific key.
@@ -319,7 +323,7 @@ per clone with:
 git config core.hooksPath scripts/hooks
 ```
 
-Current state: **327 unit tests, 0 failures**, lint clean.
+Current state: **336 unit tests, 0 failures**, lint clean.
 
 ---
 
