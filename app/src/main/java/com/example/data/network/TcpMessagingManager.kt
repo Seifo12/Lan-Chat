@@ -570,7 +570,8 @@ private val messageCounters: MessageCounters by lazy { MessageCounters(database.
         }
     }
 
-    private suspend fun processReceivedPacket(packet: NetworkPacket, senderIp: String) {
+    /** Visible for the receive-path regression test; the socket layer is not what is under test. */
+    internal suspend fun processReceivedPacket(packet: NetworkPacket, senderIp: String) {
         when (packet) {
             is BeaconPacket -> {
                 if (packet.deviceId != userPreferences.deviceId) {
@@ -614,7 +615,15 @@ private val messageCounters: MessageCounters by lazy { MessageCounters(database.
                 // window is a replay. This is checked before any processing, and
                 // the record deliberately outlives the conversation so deleting a
                 // chat does not hand an attacker a clean slate.
-                if (!replayGuard.tryAccept(packet.senderId, packet.messageId)) {
+                //
+                // This is a pure read on purpose. Recording happens only for a
+                // message that verified, in the accepted branch below. A
+                // tryAccept here would plant a record for a packet that is then
+                // refused, and the verifier would see the planted record as
+                // already seen: every first delivery would be refused as a
+                // duplicate, and a forgery arriving before the genuine message
+                // would block the genuine one.
+                if (replayGuard.wasRecorded(packet.senderId, packet.messageId)) {
                     Log.w(TAG, "Dropping replayed message ${packet.messageId} " +
                         "from ${packet.senderId}")
                     return
