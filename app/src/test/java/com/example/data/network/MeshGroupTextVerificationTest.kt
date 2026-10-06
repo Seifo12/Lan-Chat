@@ -5,9 +5,12 @@ import androidx.room.Room
 import androidx.test.core.app.ApplicationProvider
 import com.example.data.local.ChatDatabase
 import com.example.data.local.ContactEntity
+import com.example.data.local.GroupEntity
+import com.example.data.local.GroupMemberEntity
 import com.example.data.local.MeshTextReceiver
 import com.example.data.local.UserPreferences
 import com.example.data.security.EncryptionManager
+import com.example.data.security.GroupInviteCodec
 import com.example.data.security.MessageSigningPayload
 import com.example.data.security.PairwiseSessionManager
 import kotlinx.coroutines.runBlocking
@@ -65,6 +68,22 @@ class MeshGroupTextVerificationTest {
                     publicKeyBase64 = sender.getMyPublicKeyBase64(),
                 )
             )
+            // Phase 1.8: delivery needs mutual membership, so the delivery
+            // tests seed it. The refusal tests below run in the same world,
+            // which proves their refusals come from verification, not the gate.
+            database.groupDao().insertOrUpdateGroup(
+                GroupEntity(
+                    groupId = groupId, groupName = "The Group", createdBy = peerId,
+                    creatorDeviceId = peerId, memberListVersion = 1L, isLegacy = false,
+                )
+            )
+            database.groupMembershipDao().replaceMembers(
+                groupId,
+                listOf(
+                    GroupMemberEntity(groupId, peerId, sender.getMyPublicKeyBase64(), "Mesh Peer"),
+                    GroupMemberEntity(groupId, prefs.deviceId, "my-own-key", "Me"),
+                )
+            )
         }
         receiver = MeshTextReceiver(
             database = database,
@@ -73,7 +92,10 @@ class MeshGroupTextVerificationTest {
         )
     }
 
-    /** Signed over the whole 1.3 field set, exactly as TcpMessagingManager does. */
+    /**
+     * Signed the way a version-3 sender signs group text: the digest binds
+     * the group, so the message cannot move between groups.
+     */
     private fun signedGroupTextOnWire(
         text: String,
         messageId: String,
@@ -89,7 +111,9 @@ class MeshGroupTextVerificationTest {
             messageId = messageId,
             timestamp = timestamp,
             counter = counter,
-            contentDigestHex = MessageSigningPayload.digestHex(text.toByteArray()),
+            contentDigestHex = GroupInviteCodec.groupMessageDigestHex(
+                groupId, text.toByteArray()
+            ),
         )
         val signature = MessageSigningPayload.signWith(sender, fields)
         return TextMessagePacket(

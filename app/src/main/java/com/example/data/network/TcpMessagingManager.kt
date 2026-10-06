@@ -5,8 +5,9 @@ import android.util.Log
 import com.example.data.local.ChatDatabase
 import com.example.data.local.ChatMessageEntity
 import com.example.data.local.ContactEntity
-import com.example.data.local.GroupEntity
+import com.example.data.local.GroupInviteReceiver
 import com.example.data.local.MessageStatus
+import com.example.data.local.canReceiveGroupMessage
 import com.lanchat.offline.messenger.R
 import com.example.data.local.ReplayGuard
 import com.example.data.security.InboundMessageVerifier
@@ -17,6 +18,7 @@ import com.example.data.security.MessageSigningPayload
 import com.example.data.security.ReplayWindow
 import com.example.data.local.UserPreferences
 import com.example.data.security.EncryptionManager
+import com.example.data.security.GroupInviteCodec
 import com.example.service.LanNotificationHelper
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.async
@@ -89,6 +91,14 @@ private val inFlightSends = ConcurrentHashMap.newKeySet<String>()
  * recorded on disk for the retention window.
  */
 private val replayGuard: ReplayGuard by lazy { ReplayGuard(database.seenIdDao()) }
+
+/**
+ * Phase 1.8: invitations land here. The receiver owns the ordered checks
+ * and the pending rows; this manager keeps only the transport.
+ */
+private val groupInviteReceiver by lazy {
+    GroupInviteReceiver(database, userPreferences)
+}
 
 /** Phase 1.3 persisted per-peer counters for the replay window. */
 private val messageCounters: MessageCounters by lazy { MessageCounters(database.peerCounterDao()) }
@@ -517,16 +527,6 @@ private val messageCounters: MessageCounters by lazy { MessageCounters(database.
             }
 
             val conversationKey = if (isGroup) (groupId ?: "group_general") else senderId
-            if (isGroup && groupId != null) {
-                val existingGroup = database.groupDao().getGroupById(groupId)
-                if (existingGroup == null) {
-                    database.groupDao().insertOrUpdateGroup(GroupEntity(
-                        groupId = groupId, groupName = groupName ?: "مجموعة عائمة",
-                        createdBy = senderName, createdAt = timestamp
-                    ))
-                }
-            }
-
             val entity = ChatMessageEntity(
                 id = messageId, conversationId = conversationKey, senderId = senderId,
                 senderName = senderName, recipientId = recipientId,
@@ -648,9 +648,20 @@ private val messageCounters: MessageCounters by lazy { MessageCounters(database.
                         counter = packet.counter,
                         protocolVersion = packet.protocolVersion,
                         signatureBase64 = packet.signatureBase64,
-                        contentDigestHex = MessageSigningPayload.digestHex(
-                            packet.text.toByteArray(Charsets.UTF_8)
-                        ),
+                        // Phase 1.8: v3 group text binds its groupId, so a signed
+                        // message cannot move between groups. Older digests still
+                        // verify, so v2 peers stay readable.
+                        contentDigestHex = if (packet.isGroup && packet.groupId != null &&
+                            packet.protocolVersion >= 3
+                        ) {
+                            GroupInviteCodec.groupMessageDigestHex(
+                                packet.groupId, packet.text.toByteArray(Charsets.UTF_8)
+                            )
+                        } else {
+                            MessageSigningPayload.digestHex(
+                                packet.text.toByteArray(Charsets.UTF_8)
+                            )
+                        },
                         alreadySeen = replayGuard.wasRecorded(packet.senderId, packet.messageId),
                     ),
                     senderPublicKeyBase64 = senderKey,
@@ -695,16 +706,18 @@ private val messageCounters: MessageCounters by lazy { MessageCounters(database.
                     }
                 }
 
-                val conversationKey = if (packet.isGroup) (packet.groupId ?: "group_general") else packet.senderId
-                if (packet.isGroup && packet.groupId != null) {
-                    val existingGroup = database.groupDao().getGroupById(packet.groupId)
-                    if (existingGroup == null) {
-                        database.groupDao().insertOrUpdateGroup(GroupEntity(
-                            groupId = packet.groupId, groupName = packet.groupName ?: "مجموعة عائمة",
-                            createdBy = packet.senderName, createdAt = packet.timestamp
-                        ))
-                    }
+                // Phase 1.8: groups are received only by mutual members, and
+                // unknown ids never materialise a group. Legacy ids are history.
+                if (packet.isGroup && packet.groupId != null &&
+                    !canReceiveGroupMessage(
+                        database, packet.groupId, packet.senderId, userPreferences.deviceId
+                    )
+                ) {
+                    Log.w(TAG, "Dropping message for ${packet.groupId}: not a mutual membership")
+                    return
                 }
+
+                val conversationKey = if (packet.isGroup) (packet.groupId ?: "group_general") else packet.senderId
                 val entity = ChatMessageEntity(
                     id = packet.messageId, conversationId = conversationKey, senderId = packet.senderId,
                     senderName = packet.senderName, recipientId = packet.recipientId, text = packet.text,
@@ -778,16 +791,6 @@ private val messageCounters: MessageCounters by lazy { MessageCounters(database.
                 val pIsDeveloper = if (packet is VideoMessagePacket) packet.isDeveloper else (packet as FileMessagePacket).isDeveloper
                 val conversationKey = if (isGrp && !grpId.isNullOrBlank()) grpId else sId
 
-                if (isGrp && grpId != null) {
-                    val existingGroup = database.groupDao().getGroupById(grpId)
-                    if (existingGroup == null) {
-                        database.groupDao().insertOrUpdateGroup(GroupEntity(
-                            groupId = grpId, groupName = grpName ?: "مجموعة عائمة",
-                            createdBy = sName, createdAt = pTimestamp
-                        ))
-                    }
-                }
-
                 val entity = ChatMessageEntity(
                     id = mId, conversationId = conversationKey, senderId = sId,
                     senderName = sName, recipientId = rId, text = fCaption,
@@ -818,15 +821,6 @@ private val messageCounters: MessageCounters by lazy { MessageCounters(database.
             }
             is VoiceMessagePacket -> {
                 val conversationKey = if (packet.isGroup) (packet.groupId ?: "group_general") else packet.senderId
-                if (packet.isGroup && packet.groupId != null) {
-                    val existingGroup = database.groupDao().getGroupById(packet.groupId)
-                    if (existingGroup == null) {
-                        database.groupDao().insertOrUpdateGroup(GroupEntity(
-                            groupId = packet.groupId, groupName = packet.groupName ?: "مجموعة عائمة",
-                            createdBy = packet.senderName, createdAt = packet.timestamp
-                        ))
-                    }
-                }
                 val voiceBytes = android.util.Base64.decode(packet.audioBase64, android.util.Base64.DEFAULT)
                 val alreadyAtRestEncrypted = EncryptionManager.isEncryptedBytes(voiceBytes)
                 val voiceFile: File?
@@ -912,6 +906,11 @@ private val messageCounters: MessageCounters by lazy { MessageCounters(database.
                         )
                     }
                 }
+            }
+            is GroupInvitePacket -> {
+                // The verdict and the rows live in the receiver, so a refusal
+                // here and a refusal in the tests are the same refusal.
+                groupInviteReceiver.receive(packet)
             }
             else -> {}
         }

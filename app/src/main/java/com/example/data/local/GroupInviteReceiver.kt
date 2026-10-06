@@ -233,7 +233,29 @@ internal class GroupInviteReceiver(
         return InviteVerdict.Refused(reason)
     }
 
+
+
     private companion object {
         const val TAG = "GroupInviteReceiver"
     }
+}
+
+/**
+ * Phase 1.8: whether a group message may be stored. True only for mutual
+ * membership: a group row that is not legacy, with a member row for this
+ * device and one for the sender. Everything else -- unknown ids, legacy ids,
+ * non-members -- is dropped. One implementation shared by both transports so
+ * the two receive paths cannot drift.
+ */
+internal suspend fun canReceiveGroupMessage(
+    database: ChatDatabase,
+    groupId: String,
+    senderId: String,
+    myDeviceId: String,
+): Boolean {
+    val group = database.groupDao().getGroupById(groupId) ?: return false
+    if (group.isLegacy) return false
+    val membership = database.groupMembershipDao()
+    if (!membership.isMember(groupId, myDeviceId)) return false
+    return membership.isMember(groupId, senderId)
 }

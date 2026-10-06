@@ -3,6 +3,7 @@ package com.example.data.local
 import android.util.Log
 import com.example.data.network.TextMessagePacket
 import com.example.data.security.EncryptionManager
+import com.example.data.security.GroupInviteCodec
 import com.example.data.security.InboundMessageVerifier
 import com.example.data.security.InboundVerdict
 import com.example.data.security.MessageCounters
@@ -58,9 +59,20 @@ internal class MeshTextReceiver(
                 counter = packet.counter,
                 protocolVersion = packet.protocolVersion,
                 signatureBase64 = packet.signatureBase64,
-                contentDigestHex = MessageSigningPayload.digestHex(
-                    packet.text.toByteArray(Charsets.UTF_8)
-                ),
+                // Phase 1.8: v3 group text binds its groupId, so a signed
+                // message cannot move between groups. Older digests still
+                // verify, so v2 peers stay readable.
+                contentDigestHex = if (packet.isGroup && packet.groupId != null &&
+                    packet.protocolVersion >= 3
+                ) {
+                    GroupInviteCodec.groupMessageDigestHex(
+                        packet.groupId, packet.text.toByteArray(Charsets.UTF_8)
+                    )
+                } else {
+                    MessageSigningPayload.digestHex(
+                        packet.text.toByteArray(Charsets.UTF_8)
+                    )
+                },
                 alreadySeen = false,
             ),
             senderPublicKeyBase64 = senderKey,
@@ -100,6 +112,18 @@ internal class MeshTextReceiver(
                 Log.w(TAG, "Refusing mesh ${packet.messageId}: counter outside the replay window")
                 return false
             }
+        }
+
+        // Phase 1.8: groups are received only by mutual members, and unknown
+        // ids never materialise a group. Legacy ids are history. A refusal
+        // here never reaches onAccepted, so no ack leaks presence.
+        if (packet.isGroup && packet.groupId != null &&
+            !canReceiveGroupMessage(
+                database, packet.groupId, packet.senderId, userPreferences.deviceId
+            )
+        ) {
+            Log.w(TAG, "Refusing mesh message for ${packet.groupId}: not a mutual membership")
+            return false
         }
 
         val convId = if (packet.isGroup && !packet.groupId.isNullOrBlank()) {
