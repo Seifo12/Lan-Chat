@@ -35,4 +35,25 @@
     <string name="security_resent_count">Resending %1$d message(s)</string>
     <string name="security_pin_missing">No key has been pinned for this contact yet</string>
     <string name="security_no_paired_key">This contact has not shared a key, so there is nothing to verify</string>
+    <!-- Secured groups, Phase 1.8 -->
+    <string name="group_invite_title">Group invitation</string>
+    <string name="group_invite_body">%1$s invited you to the group “%2$s” with %3$d members.</string>
+    <string name="group_invite_accept">Accept</string>
+    <string name="group_invite_decline">Decline</string>
+    <string name="group_invite_vouched_note">Members are vouched for by the inviter until you pair with them directly.</string>
+    <string name="group_legacy_banner">This is a legacy group from before signed membership. Its history stays readable, but nothing new can be sent here.</string>
+    <string name="group_recreate_secured">Recreate as secured group</string>
+    <string name="group_recreated">Secured group created</string>
+    <string name="group_members_title">Members</string>
+    <string name="group_member_paired">Paired contact</string>
+    <string name="group_member_unpaired_unverified">Not paired, unverified</string>
+    <string name="group_member_key_changed">Key changed, blocked</string>
+    <string name="group_leave">Leave group</string>
+    <string name="group_left">Left the group</string>
+    <string name="group_create_members_label">Members to invite</string>
+    <string name="group_create_private_note">Only the people you pick can ever see this group. Nothing is announced.</string>
+    <string name="group_send_unavailable">This group is unavailable: unknown or legacy.</string>
+    <string name="dialog_close">Close</string>
+    <string name="group_subtitle_legacy">Legacy group, read-only</string>
+    <string name="group_subtitle_members">%1$d members, invitation only</string>
 </resources>

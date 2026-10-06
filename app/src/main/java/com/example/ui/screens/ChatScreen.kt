@@ -99,6 +99,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
@@ -114,9 +115,12 @@ import com.example.ui.ChatViewModel
 import com.example.ui.components.AvatarView
 import com.example.ui.components.ChatBubble
 import com.example.ui.components.ContactEditDialog
+import com.example.ui.components.CreateGroupDialog
 import com.example.ui.components.DeveloperBadge
+import com.example.ui.components.GroupMembersDialog
 import com.example.ui.components.ImageViewerDialog
 import com.example.ui.components.TransferProgressCard
+import com.lanchat.offline.messenger.R
 import com.example.ui.theme.AppTheme
 import com.example.data.network.FeedbackUtils
 import kotlinx.coroutines.launch
@@ -155,6 +159,20 @@ fun ChatScreen(
     var showEditContactDialog by remember { mutableStateOf(false) }
     var showOptionsMenu by remember { mutableStateOf(false) }
     var showDeleteConfirmDialog by remember { mutableStateOf(false) }
+    var showMembersDialog by remember { mutableStateOf(false) }
+    var showRecreateDialog by remember { mutableStateOf(false) }
+    val contacts by viewModel.contacts.collectAsState()
+    var memberRows by remember {
+        mutableStateOf(emptyList<com.example.data.local.GroupMemberEntity>())
+    }
+    LaunchedEffect(group?.groupId) {
+        val id = group?.groupId
+        memberRows = if (id == null) {
+            emptyList()
+        } else {
+            viewModel.loadGroupMembers(id)
+        }
+    }
     var showAttachmentMenu by remember { mutableStateOf(false) }
 
     // Slide-to-cancel drag tracking state
@@ -251,6 +269,49 @@ fun ChatScreen(
                 viewModel.updateContactCustomization(contact.deviceId, nickname, avatarPath)
                 showEditContactDialog = false
             }
+        )
+    }
+
+    // Phase 1.8: roster with trust marks, and leaving.
+    val activeGroup = group
+    if (showMembersDialog && activeGroup != null) {
+        GroupMembersDialog(
+            groupName = activeGroup.groupName,
+            members = memberRows,
+            contacts = contacts,
+            showLeave = !activeGroup.isLegacy,
+            onLeave = {
+                viewModel.leaveGroup(activeGroup.groupId)
+                showMembersDialog = false
+                scope.launch {
+                    snackbarHostState.showSnackbar(
+                        context.getString(R.string.group_left)
+                    )
+                }
+                onBack()
+            },
+            onDismiss = { showMembersDialog = false },
+        )
+    }
+
+    // Phase 1.8: recreation mints a fresh group; history is never converted.
+    if (showRecreateDialog && group != null) {
+        CreateGroupDialog(
+            contacts = contacts,
+            onDismiss = { showRecreateDialog = false },
+            onCreate = { name, description, colorIndex, memberIds ->
+                viewModel.recreateLegacyGroup(group.groupId, memberIds) {
+                    scope.launch {
+                        snackbarHostState.showSnackbar(
+                            context.getString(R.string.group_recreated)
+                        )
+                    }
+                }
+                showRecreateDialog = false
+            },
+            initialName = group.groupName,
+            initialDescription = group.description,
+            initialColorIndex = group.avatarColorIndex,
         )
     }
 
@@ -396,8 +457,12 @@ fun ChatScreen(
                     Column(
                         modifier = Modifier
                             .weight(1f)
-                            .clickable(enabled = contact != null) {
-                                showEditContactDialog = true
+                            .clickable(enabled = contact != null || group != null) {
+                                if (contact != null) {
+                                    showEditContactDialog = true
+                                } else {
+                                    showMembersDialog = true
+                                }
                             }
                     ) {
                         Row(verticalAlignment = Alignment.CenterVertically) {
@@ -433,7 +498,13 @@ fun ChatScreen(
                             }
                         } else if (group != null) {
                             Text(
-                                text = "مجموعة محلية مفتوحة للجميع",
+                                text = if (group.isLegacy) {
+                                    stringResource(R.string.group_subtitle_legacy)
+                                } else {
+                                    stringResource(
+                                        R.string.group_subtitle_members, memberRows.size
+                                    )
+                                },
                                 fontSize = 12.sp,
                                 color = AppTheme.colors.textSecondary
                             )
@@ -548,6 +619,31 @@ fun ChatScreen(
                             transfer = transfer,
                             onCancel = { viewModel.cancelTransfer(transfer.transferId) }
                         )
+                    }
+                }
+            }
+
+            // Phase 1.8: legacy groups explain themselves instead of failing sends.
+            if (group != null && group.isLegacy) {
+                Surface(
+                    color = AppTheme.colors.surfaceVariant,
+                    shape = RoundedCornerShape(10.dp),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 12.dp, vertical = 6.dp)
+                ) {
+                    Column(modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp)) {
+                        Text(
+                            text = stringResource(R.string.group_legacy_banner),
+                            fontSize = 12.sp,
+                            color = AppTheme.colors.textSecondary
+                        )
+                        Spacer(modifier = Modifier.height(6.dp))
+                        TextButton(
+                            onClick = { showRecreateDialog = true },
+                        ) {
+                            Text(stringResource(R.string.group_recreate_secured))
+                        }
                     }
                 }
             }

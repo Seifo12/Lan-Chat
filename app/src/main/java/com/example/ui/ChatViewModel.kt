@@ -85,6 +85,24 @@ data class ConversationUiItem(
 
 class ChatViewModel(application: Application) : AndroidViewModel(application) {
 
+    /**
+     * Test seam for the coroutine context of fire-and-forget UI actions.
+     * Secondary constructor only, so the framework factory keeps finding the
+     * plain (Application) primary. Production passes nothing and gets
+     * Dispatchers.IO; tests pass Unconfined so delegation completes on the
+     * calling thread instead of competing for the single shared IO pool with
+     * hundreds of leaked threads from other test classes.
+     */
+    constructor(
+        application: Application,
+        io: kotlinx.coroutines.CoroutineDispatcher
+    ) : this(application) {
+        this.io = io
+    }
+
+    private var io: kotlinx.coroutines.CoroutineDispatcher =
+        kotlinx.coroutines.Dispatchers.IO
+
     private val app = application as? LanChatApplication ?: LanChatApplication.instance
     val userPrefs: UserPreferences = app.userPreferences
     private val database: ChatDatabase = app.database
@@ -593,29 +611,35 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
         memberIds: List<String>,
         onDone: (com.example.data.local.GroupEntity?) -> Unit = {},
     ) {
-        viewModelScope.launch(Dispatchers.IO) {
+        viewModelScope.launch(io) {
             onDone(tcpMessaging.createSecuredGroup(name, description, avatarColorIndex, memberIds))
         }
     }
 
     /** The accept tap. The only writer of membership from an invitation. */
     fun acceptGroupInvite(groupId: String, nonce: String) {
-        viewModelScope.launch(Dispatchers.IO) {
+        viewModelScope.launch(io) {
             com.example.data.local.GroupInviteReceiver(database, userPrefs)
                 .acceptInvite(groupId, nonce)
         }
     }
 
     fun declineGroupInvite(groupId: String, nonce: String) {
-        viewModelScope.launch(Dispatchers.IO) {
+        viewModelScope.launch(io) {
             com.example.data.local.GroupInviteReceiver(database, userPrefs)
                 .declineInvite(groupId, nonce)
         }
     }
 
+    /** Roster for the member list. Display only; trust lives in the checks. */
+    suspend fun loadGroupMembers(
+        groupId: String
+    ): List<com.example.data.local.GroupMemberEntity> =
+        database.groupMembershipDao().membersOf(groupId)
+
     /** Leaving is local only and needs no packet. */
     fun leaveGroup(groupId: String) {
-        viewModelScope.launch(Dispatchers.IO) {
+        viewModelScope.launch(io) {
             com.example.data.local.GroupInviteReceiver(database, userPrefs)
                 .leaveGroup(groupId)
         }
@@ -630,7 +654,7 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
         memberIds: List<String>,
         onDone: (com.example.data.local.GroupEntity?) -> Unit = {},
     ) {
-        viewModelScope.launch(Dispatchers.IO) {
+        viewModelScope.launch(io) {
             val legacy = database.groupDao().getGroupById(groupId)
             if (legacy == null || !legacy.isLegacy) {
                 onDone(null)
@@ -803,36 +827,6 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
         audioPlayer.stop()
     }
 
-    fun createGroup(name: String, description: String = "", avatarColorIndex: Int = 0) {
-        if (name.isBlank()) return
-        viewModelScope.launch {
-            val groupId = "group_${System.currentTimeMillis()}_${userPrefs.deviceId.take(4)}"
-            val group = GroupEntity(
-                groupId = groupId,
-                groupName = name.trim(),
-                description = description.trim(),
-                createdBy = userPrefs.displayName,
-                avatarColorIndex = avatarColorIndex
-            )
-            database.groupDao().insertOrUpdateGroup(group)
-            val currentContacts = contacts.value
-            for (peer in currentContacts) {
-                if (peer.isOnline) {
-                    val packet = com.example.data.network.GroupAnnouncePacket(
-                        groupId = group.groupId,
-                        groupName = group.groupName,
-                        description = group.description,
-                        createdBy = group.createdBy,
-                        avatarColorIndex = group.avatarColorIndex,
-                        createdAt = group.createdAt
-                    )
-                    launch {
-                        tcpMessaging.sendPacketDirect(peer.ipAddress, peer.tcpPort, packet)
-                    }
-                }
-            }
-        }
-    }
 
     /** Whether the microphone is available. Without it the caller ends up fully silent. */
     fun hasRecordAudioPermission(): Boolean =

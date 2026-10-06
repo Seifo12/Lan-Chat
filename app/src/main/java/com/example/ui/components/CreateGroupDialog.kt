@@ -12,7 +12,9 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyRow
+import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -23,6 +25,7 @@ import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
+import androidx.compose.material3.Checkbox
 import androidx.compose.material3.Icon
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.OutlinedTextFieldDefaults
@@ -39,27 +42,35 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
+import com.example.data.local.ContactEntity
 import com.example.ui.theme.AvatarColors
 import com.example.ui.theme.BorderLight
 import com.example.ui.theme.PrimaryGreen
+import com.lanchat.offline.messenger.R
 import com.example.ui.theme.TextPrimary
 import com.example.ui.theme.TextSecondary
 
 @Composable
 fun CreateGroupDialog(
+    contacts: List<ContactEntity>,
     onDismiss: () -> Unit,
-    onCreate: (name: String, description: String, colorIndex: Int) -> Unit
+    onCreate: (name: String, description: String, colorIndex: Int, memberIds: List<String>) -> Unit,
+    initialName: String = "",
+    initialDescription: String = "",
+    initialColorIndex: Int = 0,
 ) {
-    var groupName by remember { mutableStateOf("") }
-    var groupDescription by remember { mutableStateOf("") }
-    var selectedColorIndex by remember { mutableIntStateOf(0) }
+    var groupName by remember(initialName) { mutableStateOf(initialName) }
+    var groupDescription by remember(initialDescription) { mutableStateOf(initialDescription) }
+    var selectedColorIndex by remember(initialColorIndex) { mutableIntStateOf(initialColorIndex) }
     var errorMessage by remember { mutableStateOf<String?>(null) }
+    var selectedIds by remember { mutableStateOf(setOf<String>()) }
 
     Dialog(
         onDismissRequest = onDismiss,
@@ -102,7 +113,7 @@ fun CreateGroupDialog(
                 )
 
                 Text(
-                    text = "ستظهر المجموعة لجميع المتصلين على نفس شبكة الواي فاي",
+                    text = stringResource(R.string.group_create_private_note),
                     fontSize = 13.sp,
                     color = TextSecondary,
                     modifier = Modifier.padding(top = 4.dp, bottom = 14.dp)
@@ -197,12 +208,71 @@ fun CreateGroupDialog(
 
                 Spacer(modifier = Modifier.height(18.dp))
 
+                // Phase 1.8: the roster is chosen, not implied. Whoever is not
+                // picked never sees the group at all.
+                Text(
+                    text = stringResource(R.string.group_create_members_label),
+                    fontSize = 14.sp,
+                    fontWeight = FontWeight.Bold,
+                    color = TextPrimary,
+                    modifier = Modifier.align(Alignment.Start).padding(bottom = 6.dp)
+                )
+
+                LazyColumn(
+                    modifier = Modifier.fillMaxWidth().height(150.dp),
+                    verticalArrangement = Arrangement.spacedBy(2.dp)
+                ) {
+                    items(contacts, key = { it.deviceId }) { contact ->
+                        val selected = contact.deviceId in selectedIds
+                        val name = contact.customNickname?.takeIf { it.isNotBlank() }
+                            ?: contact.displayName
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clip(RoundedCornerShape(10.dp))
+                                .clickable {
+                                    selectedIds = if (selected) {
+                                        selectedIds - contact.deviceId
+                                    } else {
+                                        selectedIds + contact.deviceId
+                                    }
+                                }
+                                .padding(horizontal = 8.dp, vertical = 6.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(8.dp)
+                        ) {
+                            Checkbox(
+                                checked = selected,
+                                onCheckedChange = null,
+                            )
+                            Text(
+                                text = name,
+                                fontSize = 14.sp,
+                                color = TextPrimary,
+                                modifier = Modifier.weight(1f)
+                            )
+                            if (!contact.isOnline) {
+                                Text(
+                                    text = "•",
+                                    fontSize = 14.sp,
+                                    color = TextSecondary
+                                )
+                            }
+                        }
+                    }
+                }
+
+                Spacer(modifier = Modifier.height(18.dp))
+
                 Button(
                     onClick = {
                         if (groupName.trim().isBlank()) {
                             errorMessage = "يرجى كتابة اسم للمجموعة"
                         } else {
-                            onCreate(groupName.trim(), groupDescription.trim(), selectedColorIndex)
+                            onCreate(
+                                groupName.trim(), groupDescription.trim(),
+                                selectedColorIndex, selectedIds.toList()
+                            )
                         }
                     },
                     colors = ButtonDefaults.buttonColors(containerColor = PrimaryGreen),

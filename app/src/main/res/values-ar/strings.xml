@@ -33,4 +33,25 @@
     <string name="security_resent_count">جاري إعادة إرسال %1$d رسالة</string>
     <string name="security_pin_missing">لسه مفيش مفتاح مثبّت لجهة الاتصال دي</string>
     <string name="security_no_paired_key">جهة الاتصال دي ما شاركتش مفتاح، فمفيش حاجة تتأكد منها</string>
+    <!-- Secured groups, Phase 1.8 -->
+    <string name="group_invite_title">دعوة لمجموعة</string>
+    <string name="group_invite_body">%1$s دعاك لمجموعة “%2$s” مع %3$d أعضاء.</string>
+    <string name="group_invite_accept">اقبل</string>
+    <string name="group_invite_decline">ارفض</string>
+    <string name="group_invite_vouched_note">الأعضاء مكفولين من اللي دعاك لحد ما تتواصل معاهم مباشرة.</string>
+    <string name="group_legacy_banner">دي مجموعة قديمة من قبل نظام العضوية الموقعة. التاريخ مقروء، بس مفيش حاجة جديدة ممكن تتبعت هنا.</string>
+    <string name="group_recreate_secured">أنشئ مجموعة مؤمّنة</string>
+    <string name="group_recreated">تم إنشاء المجموعة المؤمّنة</string>
+    <string name="group_members_title">الأعضاء</string>
+    <string name="group_member_paired">جهة اتصال مقترنة</string>
+    <string name="group_member_unpaired_unverified">مش مقترن، غير مؤكد</string>
+    <string name="group_member_key_changed">المفتاح اتغير، محظور</string>
+    <string name="group_leave">اخرج من المجموعة</string>
+    <string name="group_left">خرجت من المجموعة</string>
+    <string name="group_create_members_label">الأعضاء المدعوون</string>
+    <string name="group_create_private_note">بس اللي اخترتهم هما اللي هيشوفوا المجموعة دي. مفيش حاجة بتتذاع.</string>
+    <string name="group_send_unavailable">المجموعة دي غير متاحة: مجهولة أو قديمة.</string>
+    <string name="dialog_close">إغلاق</string>
+    <string name="group_subtitle_legacy">مجموعة قديمة، للقراءة فقط</string>
+    <string name="group_subtitle_members">%1$d أعضاء، بالدعوة فقط</string>
 </resources>

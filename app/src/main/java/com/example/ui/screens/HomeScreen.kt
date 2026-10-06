@@ -136,6 +136,7 @@ import com.example.ui.ConversationUiItem
 import com.example.ui.components.AvatarView
 import com.example.ui.components.ContactEditDialog
 import com.example.ui.components.CreateGroupDialog
+import com.example.ui.components.GroupInviteDialog
 import com.example.ui.components.DeveloperBadge
 import com.example.ui.components.NetworkStatusCard
 import com.example.ui.components.ProfileSetupDialog
@@ -202,6 +203,7 @@ fun HomeScreen(
         }
     }
     val discoveredPeers by viewModel.discoveredPeers.collectAsState()
+    val pendingInvites by viewModel.pendingGroupInvites.collectAsState(initial = emptyList())
     var showManualIpDialog by remember { mutableStateOf(false) }
     var contactToEdit by remember { mutableStateOf<ContactEntity?>(null) }
     var contactToDelete by remember { mutableStateOf<ContactEntity?>(null) }
@@ -245,11 +247,40 @@ fun HomeScreen(
     // Create Group Dialog
     if (showCreateGroupDialog) {
         CreateGroupDialog(
+            contacts = contacts,
             onDismiss = { showCreateGroupDialog = false },
-            onCreate = { name, description, colorIndex ->
-                viewModel.createGroup(name, description, colorIndex)
+            onCreate = { name, description, colorIndex, memberIds ->
+                viewModel.createSecuredGroup(name, description, colorIndex, memberIds)
                 showCreateGroupDialog = false
             }
+        )
+    }
+
+    // Phase 1.8: a verified invitation interrupts for an explicit decision.
+    // The dialog shows the first pending one; the rest wait their turn.
+    val pendingInvite = pendingInvites.firstOrNull()
+    if (pendingInvite != null) {
+        val parsed = remember(pendingInvite) {
+            com.example.data.security.GroupInviteCodec.parse(
+                pendingInvite.rawBytes.toString(Charsets.UTF_8)
+            )
+        }
+        val creatorName = remember(pendingInvite, contacts) {
+            contacts.firstOrNull { it.deviceId == pendingInvite.creatorId }
+                ?.let { it.customNickname?.takeIf { n -> n.isNotBlank() } ?: it.displayName }
+                ?: pendingInvite.creatorId
+        }
+        GroupInviteDialog(
+            invite = pendingInvite,
+            creatorName = creatorName,
+            memberCount = parsed?.members?.size ?: 0,
+            onAccept = {
+                viewModel.acceptGroupInvite(pendingInvite.groupId, pendingInvite.nonce)
+            },
+            onDecline = {
+                viewModel.declineGroupInvite(pendingInvite.groupId, pendingInvite.nonce)
+            },
+            onDismiss = { /* an invitation is decided, not swiped away */ },
         )
     }
 
