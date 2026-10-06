@@ -193,6 +193,13 @@ The following are real, known gaps:
   keys, and a send needs the recipient's key to derive a shared secret. A contact
   row that has never completed pairing has no key, so sends to it are refused.
   This is intended, but it does mean legacy contacts must be re-paired.
+- **A changed key blocks sending until you accept it.** Each contact keeps the key
+  you pinned when you added it. If the peer later presents a different key,
+  nothing is sent to it and the contact is flagged, rather than the new key being
+  accepted automatically. The acceptance path exists but has no UI yet: accepting
+  a new key has to be something you do deliberately, and there is currently no
+  screen for it, so a peer that legitimately regenerated its identity stays blocked
+  until that screen exists.
 - **The transport is not yet pinned.** There is no mutual TLS with a pinned peer
   identity yet. A network attacker in radio range is not defended against
   impersonation today. Mutual TLS with a pinned peer identity is planned; see the
@@ -304,7 +311,7 @@ per clone with:
 git config core.hooksPath scripts/hooks
 ```
 
-Current state: **284 unit tests, 0 failures**, lint clean.
+Current state: **298 unit tests, 0 failures**, lint clean.
 
 ---
 

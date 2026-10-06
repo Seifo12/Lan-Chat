@@ -132,7 +132,21 @@ data class ContactEntity(
      * LAN address instead of being reduced to a "p2p-..." placeholder that no
      * longer has any LAN route at all.
      */
-    val meshEndpointId: String? = null
+    val meshEndpointId: String? = null,
+    /**
+     * Phase 1.6: the key this device decided to trust for [deviceId].
+     *
+     * Written only when the user explicitly adds the contact, never on first
+     * contact. [publicKeyBase64] is whatever the peer last presented and can be
+     * overwritten by whoever the peer turns out to be; this is the value we agreed
+     * on, so a difference between the two means the peer's key changed.
+     */
+    val pinnedPublicKey: String? = null,
+    /**
+     * Phase 1.6: true once a key different from [pinnedPublicKey] has been seen.
+     * While set, nothing is sent to this peer until the user accepts the new key.
+     */
+    val hasKeyChanged: Boolean = false
 )
 
 @Entity(tableName = "groups")

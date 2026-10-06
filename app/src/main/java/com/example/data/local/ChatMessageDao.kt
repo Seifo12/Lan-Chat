@@ -91,6 +91,33 @@ interface ContactDao {
     @Query("UPDATE contacts SET isOnline = 0 WHERE :currentTime - lastSeen > :timeoutMs")
     suspend fun markInactiveContactsOffline(currentTime: Long, timeoutMs: Long = 10000L)
 
+    /**
+     * Phase 1.6: record the key a peer presented, and raise the block if it is not
+     * the key the user pinned.
+     *
+     * The flag is set here rather than at the call sites so it cannot be forgotten
+     * on one path. The pin itself is never written by this method: overwriting it
+     * automatically is the silent re-pin that 1.6 exists to prevent.
+     */
+    @Query(
+        "UPDATE contacts SET publicKeyBase64 = :publicKeyBase64, " +
+            "hasKeyChanged = CASE WHEN pinnedPublicKey IS NOT NULL " +
+            "AND pinnedPublicKey != :publicKeyBase64 THEN 1 ELSE 0 END " +
+            "WHERE deviceId = :deviceId"
+    )
+    suspend fun updatePublicKey(deviceId: String, publicKeyBase64: String?)
+
+    /**
+     * Phase 1.6: the user explicitly accepted a new key. This is the only path
+     * that moves the pin, and it is never called automatically.
+     */
+    @Query(
+        "UPDATE contacts SET pinnedPublicKey = :publicKeyBase64, " +
+            "publicKeyBase64 = :publicKeyBase64, hasKeyChanged = 0 " +
+            "WHERE deviceId = :deviceId"
+    )
+    suspend fun acceptNewKey(deviceId: String, publicKeyBase64: String)
+
     @Query("DELETE FROM contacts WHERE deviceId = :deviceId")
     suspend fun deleteContact(deviceId: String)
 }

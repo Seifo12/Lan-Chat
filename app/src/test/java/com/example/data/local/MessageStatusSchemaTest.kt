@@ -95,6 +95,8 @@ class MessageStatusSchemaTest {
         val addedPerVersion = mapOf(
             10 to setOf("seen_ids"),
             11 to setOf("peer_counters"),
+            // 1.6 adds columns to contacts, not a table.
+            12 to emptySet(),
         )
         for ((version, expected) in addedPerVersion) {
             assertEquals(

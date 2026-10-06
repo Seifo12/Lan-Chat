@@ -69,8 +69,15 @@ class PeerCountersMigrationTest {
     }
 
     private fun openMigrated(): ChatDatabase {
+        // Deliberately validated as 10 to 11 and not to the current version: this
+        // test is about the counters table, and pinning the target keeps it testing
+        // the migration it names.
         helper.runMigrationsAndValidate(dbName, 11, true, ChatDatabase.MIGRATION_10_11).close()
-        return Room.databaseBuilder(context, ChatDatabase::class.java, dbName).build()
+        // Then continue to the current version so Room will open the file.
+        val current = Room.databaseBuilder(context, ChatDatabase::class.java, dbName)
+            .addMigrations(ChatDatabase.MIGRATION_11_12)
+            .build()
+        return current
     }
 
     @Test

@@ -15,7 +15,7 @@ import androidx.sqlite.db.SupportSQLiteDatabase
  * class. Keeping it here is what stops the declared version and the number tests
  * and tooling read from drifting apart.
  */
-const val SCHEMA_VERSION = 11
+const val SCHEMA_VERSION = 12
 
 @Database(
     entities = [
@@ -134,6 +134,25 @@ abstract class ChatDatabase : RoomDatabase() {
             }
         }
 
+        /**
+         * Phase 1.6: the identity pin.
+         *
+         * Existing installs are pinned to the key they are already using. Their
+         * deviceId does not change, because conversationId is derived from it and
+         * a new value would make every existing contact see a different person and
+         * lose all history. Trust travels with the pin rather than the identifier.
+         */
+        val MIGRATION_11_12 = object : Migration(11, 12) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("ALTER TABLE contacts ADD COLUMN pinnedPublicKey TEXT")
+                db.execSQL("ALTER TABLE contacts ADD COLUMN hasKeyChanged INTEGER NOT NULL DEFAULT 0")
+                db.execSQL(
+                    "UPDATE contacts SET pinnedPublicKey = publicKeyBase64 " +
+                        "WHERE publicKeyBase64 IS NOT NULL AND publicKeyBase64 != ''"
+                )
+            }
+        }
+
         fun getDatabase(context: Context): ChatDatabase {
             return INSTANCE ?: synchronized(this) {
                 val instance = Room.databaseBuilder(
@@ -142,7 +161,7 @@ abstract class ChatDatabase : RoomDatabase() {
                     "lan_chat_database"
                 ).addMigrations(
                 MIGRATION_5_6, MIGRATION_6_7, MIGRATION_7_8, MIGRATION_8_9,
-                MIGRATION_9_10, MIGRATION_10_11
+                MIGRATION_9_10, MIGRATION_10_11, MIGRATION_11_12
             )
                     .build()
                 INSTANCE = instance

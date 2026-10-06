@@ -59,6 +59,7 @@ class SeenIdsMigrationTest {
         helper.runMigrationsAndValidate(
             dbName, SCHEMA_VERSION, true,
             ChatDatabase.MIGRATION_9_10, ChatDatabase.MIGRATION_10_11,
+            ChatDatabase.MIGRATION_11_12,
         ).close()
     }
 

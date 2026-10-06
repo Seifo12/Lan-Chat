@@ -10,6 +10,7 @@ import com.example.data.local.MessageStatus
 import com.lanchat.offline.messenger.R
 import com.example.data.local.ReplayGuard
 import com.example.data.security.InboundMessageVerifier
+import com.example.data.security.IdentityPin
 import com.example.data.security.InboundVerdict
 import com.example.data.security.MessageCounters
 import com.example.data.security.MessageSigningPayload
@@ -148,7 +149,11 @@ private val messageCounters: MessageCounters by lazy { MessageCounters(database.
                         val grouped = pendingList.groupBy { it.conversationId }
                         for ((peerId, messages) in grouped) {
                             val contact = database.contactDao().getContactById(peerId)
-                            if (contact != null && contact.isOnline) {
+                            // Phase 1.6: a changed key blocks the queue too, or a
+                            // blocked message would keep being retried forever.
+                            if (contact != null && contact.isOnline &&
+                                !contact.hasKeyChanged
+                            ) {
                                 deliverPendingMessages(contact.deviceId, contact.ipAddress, contact.tcpPort, messages)
                             }
                         }
@@ -1027,6 +1032,12 @@ private val messageCounters: MessageCounters by lazy { MessageCounters(database.
             timestamp = entity.timestamp,
             content = text.toByteArray(Charsets.UTF_8),
         )
+        if (keyChangeBlocks(recipientId)) {
+            database.chatMessageDao().updateMessageStatus(messageId, MessageStatus.FAILED)
+            return@withContext Result.failure(
+                java.io.IOException("Blocked: $recipientId's key changed and was not accepted")
+            )
+        }
         if (signed == null) {
             // Fail closed, as 1.2 established: a message that cannot be protected
             // for its recipient is not sent, and the row says why.
@@ -1845,6 +1856,28 @@ private val messageCounters: MessageCounters by lazy { MessageCounters(database.
             )
         ) ?: return null
         return counter to signature
+    }
+
+    /**
+     * Phase 1.6: refuses to send to a peer whose key no longer matches the pin the
+     * user agreed to.
+     *
+     * This is the failure the pin exists to stop: a changed key has to become
+     * unusable immediately, and only the user can lift the block. Every send path
+     * funnels through here, so there is one place to reason about.
+     */
+    private suspend fun keyChangeBlocks(peerDeviceId: String): Boolean {
+        val contact = database.contactDao().getContactById(peerDeviceId) ?: return false
+        if (!contact.hasKeyChanged) return false
+
+        val change = IdentityPin.describeChange(contact.pinnedPublicKey, contact.publicKeyBase64)
+        Log.w(
+            TAG,
+            "Refusing to send to $peerDeviceId: its key changed" +
+                (change?.let { " (now ${it.fingerprint})" } ?: "") +
+                ". The user must accept the new key before traffic resumes."
+        )
+        return true
     }
 
     /** Returns true when the packet reached the peer over direct LAN TCP. */

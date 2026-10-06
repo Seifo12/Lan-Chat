@@ -109,5 +109,10 @@ change quietly contradict it.
   runtime. `SignedMessageRoundTripTest` exists so that cannot happen unnoticed
   again; keep it green.
 
+The identity pin lives in `contacts.pinnedPublicKey`, and `contacts.publicKeyBase64`
+is only whatever the peer last presented. The pin is written by exactly one query,
+`ContactDao.acceptNewKey`, which is only ever called from an explicit user action.
+Never write the pin from a beacon, a discovery result, or a first connection.
+
 Phase scope and order live in `docs/PHASE1-DESIGN.md`. Do not restate or
 renumber the phases here; reference that document instead.
