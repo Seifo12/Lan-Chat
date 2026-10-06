@@ -29,6 +29,10 @@ interface GroupMembershipDao {
     @Query("DELETE FROM group_members WHERE groupId = :groupId")
     suspend fun clearMembers(groupId: String)
 
+    /** Self-leave. The group row stays as readable history. */
+    @Query("DELETE FROM group_members WHERE groupId = :groupId AND deviceId = :deviceId")
+    suspend fun removeMembership(groupId: String, deviceId: String)
+
     /** Whole-table replace: a creator-signed list is authoritative, not merged. */
     @Transaction
     suspend fun replaceMembers(groupId: String, members: List<GroupMemberEntity>) {
