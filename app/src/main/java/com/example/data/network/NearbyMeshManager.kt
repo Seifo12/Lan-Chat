@@ -889,15 +889,6 @@ class NearbyMeshManager(
                         )
                         pendingFileMeta.add(System.currentTimeMillis() to meta)
                     }
-                    is GroupAnnouncePacket -> {
-                        database.groupDao().insertOrUpdateGroup(
-                            com.example.data.local.GroupEntity(
-                                groupId = packet.groupId, groupName = packet.groupName,
-                                description = packet.description, createdBy = packet.createdBy,
-                                createdAt = packet.createdAt, avatarColorIndex = packet.avatarColorIndex
-                            )
-                        )
-                    }
                     is CallOfferPacket, is CallRingingPacket, is CallAnswerPacket, is CallEndPacket -> {
                         tcpMessagingManager.callSignalListener?.invoke(packet, "p2p-$fromEndpointId")
                     }
