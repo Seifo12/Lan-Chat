@@ -161,7 +161,18 @@ data class GroupEntity(
     val groupId: String,
     val groupName: String,
     val description: String = "",
+    /**
+     * Display name of whoever the group was created by. Carries no identity:
+     * it has only ever come from a packet or a local display name, so nothing
+     * security-relevant may be derived from it. Use [creatorDeviceId] for that.
+     */
     val createdBy: String,
     val createdAt: Long = System.currentTimeMillis(),
-    val avatarColorIndex: Int = 0
+    val avatarColorIndex: Int = 0,
+    /** Phase 1.8: the verified creator device id. Null for legacy rows, which predate it. */
+    val creatorDeviceId: String? = null,
+    /** Phase 1.8: highest creator-signed member-list version applied. Zero means none. */
+    val memberListVersion: Long = 0,
+    /** Phase 1.8: rows present before migration 13 to 14. Readable history, never writable. */
+    val isLegacy: Boolean = false
 )

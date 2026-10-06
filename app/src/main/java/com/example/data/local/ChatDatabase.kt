@@ -15,7 +15,7 @@ import androidx.sqlite.db.SupportSQLiteDatabase
  * class. Keeping it here is what stops the declared version and the number tests
  * and tooling read from drifting apart.
  */
-const val SCHEMA_VERSION = 13
+const val SCHEMA_VERSION = 14
 
 @Database(
     entities = [
@@ -24,7 +24,9 @@ const val SCHEMA_VERSION = 13
         GroupEntity::class,
         DiscoveredPeerEntity::class,
         SeenIdEntity::class,
-        PeerCounterEntity::class
+        PeerCounterEntity::class,
+        GroupMemberEntity::class,
+        GroupInviteEntity::class
     ],
     version = SCHEMA_VERSION,
     exportSchema = true
@@ -39,6 +41,8 @@ abstract class ChatDatabase : RoomDatabase() {
     abstract fun peerCounterDao(): PeerCounterDao
     abstract fun groupDao(): GroupDao
     abstract fun discoveredPeerDao(): DiscoveredPeerDao
+
+    abstract fun groupMembershipDao(): GroupMembershipDao
 
     companion object {
         @Volatile
@@ -160,6 +164,53 @@ abstract class ChatDatabase : RoomDatabase() {
             }
         }
 
+        /**
+         * Phase 1.8: signed membership.
+         *
+         * Every group row that exists now is marked legacy. None of them can
+         * ever be given a signed member list: they have no roster, and their
+         * createdBy column holds a display name rather than a device id, so
+         * there is no key to attribute them to. Legacy means readable history
+         * that can never become writable. Nothing is deleted, because a chat
+         * history is not an attack surface worth destroying on upgrade.
+         */
+        val MIGRATION_13_14 = object : Migration(13, 14) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("ALTER TABLE groups ADD COLUMN creatorDeviceId TEXT")
+                db.execSQL(
+                    "ALTER TABLE groups ADD COLUMN memberListVersion INTEGER NOT NULL DEFAULT 0"
+                )
+                db.execSQL("ALTER TABLE groups ADD COLUMN isLegacy INTEGER NOT NULL DEFAULT 0")
+                db.execSQL("UPDATE groups SET isLegacy = 1")
+                db.execSQL(
+                    "CREATE TABLE IF NOT EXISTS `group_members` (" +
+                        "`groupId` TEXT NOT NULL, " +
+                        "`deviceId` TEXT NOT NULL, " +
+                        "`publicKeyBase64` TEXT NOT NULL, " +
+                        "`displayName` TEXT NOT NULL, " +
+                        "`addedAt` INTEGER NOT NULL, " +
+                        "PRIMARY KEY(`groupId`, `deviceId`))"
+                )
+                db.execSQL(
+                    "CREATE INDEX IF NOT EXISTS `index_group_members_deviceId` " +
+                        "ON `group_members` (`deviceId`)"
+                )
+                db.execSQL(
+                    "CREATE TABLE IF NOT EXISTS `group_invites` (" +
+                        "`groupId` TEXT NOT NULL, " +
+                        "`nonce` TEXT NOT NULL, " +
+                        "`creatorId` TEXT NOT NULL, " +
+                        "`groupName` TEXT NOT NULL, " +
+                        "`memberListVersion` INTEGER NOT NULL, " +
+                        "`expiry` INTEGER NOT NULL, " +
+                        "`rawBytes` BLOB NOT NULL, " +
+                        "`state` TEXT NOT NULL, " +
+                        "`receivedAt` INTEGER NOT NULL, " +
+                        "PRIMARY KEY(`groupId`, `nonce`))"
+                )
+            }
+        }
+
         fun getDatabase(context: Context): ChatDatabase {
             return INSTANCE ?: synchronized(this) {
                 val instance = Room.databaseBuilder(
@@ -169,7 +220,7 @@ abstract class ChatDatabase : RoomDatabase() {
                 ).addMigrations(
                 MIGRATION_5_6, MIGRATION_6_7, MIGRATION_7_8, MIGRATION_8_9,
                 MIGRATION_9_10, MIGRATION_10_11, MIGRATION_11_12,
-                MIGRATION_12_13
+                MIGRATION_12_13, MIGRATION_13_14
             )
                     .build()
                 INSTANCE = instance

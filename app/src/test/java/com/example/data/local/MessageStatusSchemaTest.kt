@@ -97,6 +97,9 @@ class MessageStatusSchemaTest {
             11 to setOf("peer_counters"),
             // 1.6 adds columns to contacts, not a table.
             12 to emptySet(),
+            // 1.7b adds a column to contacts, not a table.
+            13 to emptySet(),
+            14 to setOf("group_members", "group_invites"),
         )
         for ((version, expected) in addedPerVersion) {
             assertEquals(

@@ -82,6 +82,7 @@ class ChatDatabaseMigrationTest {
         ChatDatabase.MIGRATION_9_10,
         ChatDatabase.MIGRATION_10_11,
         ChatDatabase.MIGRATION_11_12, ChatDatabase.MIGRATION_12_13,
+ ChatDatabase.MIGRATION_13_14,
             )
             .allowMainThreadQueries()
             .build()

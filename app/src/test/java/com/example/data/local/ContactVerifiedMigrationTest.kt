@@ -81,6 +81,7 @@ class ContactVerifiedMigrationTest {
         helper.runMigrationsAndValidate(
             dbName, SCHEMA_VERSION, true,
             ChatDatabase.MIGRATION_12_13,
+            ChatDatabase.MIGRATION_13_14,
         ).close()
     }
 
