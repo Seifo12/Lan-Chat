@@ -193,18 +193,21 @@ The following are real, known gaps:
   keys, and a send needs the recipient's key to derive a shared secret. A contact
   row that has never completed pairing has no key, so sends to it are refused.
   This is intended, but it does mean legacy contacts must be re-paired.
-- **There is no way to verify a contact yet.** The safety code itself is
-  implemented and is thirty digits read aloud, which is long enough that nobody can
-  manufacture a match. But no screen displays it, so the app cannot yet ask you to
-  confirm who you are talking to. Until it does, every contact is unverified in
-  practice regardless of what the code is capable of.
+- **Verification is voice-first and manual.** A contact's security screen shows the
+  thirty-digit safety code in six groups of five, and you confirm it by comparing
+  it with the other person, in person or in a call. Marking a contact verified
+  records that you compared the code and nothing else. There is no scan-to-compare
+  yet, and no automatic verification anywhere in the app.
 - **A changed key blocks sending until you accept it.** Each contact keeps the key
   you pinned when you added it. If the peer later presents a different key,
   nothing is sent to it and the contact is flagged, rather than the new key being
-  accepted automatically. The acceptance path exists but has no UI yet: accepting
-  a new key has to be something you do deliberately, and there is currently no
-  screen for it, so a peer that legitimately regenerated its identity stays blocked
-  until that screen exists.
+  accepted automatically. The contact's security screen offers the acceptance behind
+  a confirmation dialog, and the screen shows no code at all while the two keys
+  disagree, because a number derived from two identities that do not agree would be
+  read out as though it meant something. Accepting is the only exit from the block;
+  it is reached from that one dialog and from nowhere in the key update path.
+  A previously verified contact is not still verified when its key changes:
+  yesterday's confirmation is not evidence about today's key holder.
 - **The transport is not yet pinned.** There is no mutual TLS with a pinned peer
   identity yet. A network attacker in radio range is not defended against
   impersonation today. Mutual TLS with a pinned peer identity is planned; see the
@@ -316,7 +319,7 @@ per clone with:
 git config core.hooksPath scripts/hooks
 ```
 
-Current state: **305 unit tests, 0 failures**, lint clean.
+Current state: **327 unit tests, 0 failures**, lint clean.
 
 ---
 
