@@ -6,6 +6,7 @@ import com.example.data.local.ChatDatabase
 import com.example.data.local.ChatMessageEntity
 import com.example.data.local.ContactEntity
 import com.example.data.local.MessageStatus
+import com.example.data.local.MeshTextReceiver
 import com.example.data.local.ReplayGuard
 import com.example.data.local.UserPreferences
 import com.example.data.security.EncryptionManager
@@ -163,6 +164,31 @@ class NearbyMeshManager(
         MeshStatus(isEnabled = userPreferences.isMeshModeEnabled)
     )
     val meshStatus: StateFlow<MeshStatus> = _meshStatus.asStateFlow()
+
+    /**
+     * Phase 1.3 gap fix: mesh text goes through the same verification the TCP
+     * path uses, instead of the old check that logged a mismatch and inserted
+     * anyway. The receiver owns the verdict and the insert; this manager keeps
+     * only the transport acks.
+     */
+    private val meshTextReceiver = MeshTextReceiver(
+        database = database,
+        userPreferences = userPreferences,
+        isConversationActive = { convId ->
+            tcpMessagingManager.getActiveConversationId() == convId
+        },
+        onAccepted = { packet, endpointId ->
+            sendAckToSender(packet.senderId, packet.messageId, endpointId)
+            val convId = if (packet.isGroup && !packet.groupId.isNullOrBlank()) {
+                packet.groupId
+            } else {
+                packet.senderId
+            }
+            if (tcpMessagingManager.getActiveConversationId() == convId) {
+                sendReadAckToSender(packet.senderId, packet.messageId, endpointId)
+            }
+        },
+    )
 
     private val startLatch = MeshStartLatch()
     private val supervisor = ConnectionSupervisor()
@@ -784,31 +810,10 @@ class NearbyMeshManager(
                         handleIncomingMeshPacket(packet, senderIp = "p2p-$fromEndpointId")
                     }
                     is TextMessagePacket -> {
-                        if (packet.signatureBase64 != null) {
-                            val peer = database.contactDao().getContactById(packet.senderId)
-                            if (peer?.publicKeyBase64 != null) {
-                                val valid = EncryptionManager.getPairwiseManager()?.verifySignature(
-                                    peer.publicKeyBase64, packet.text.toByteArray(Charsets.UTF_8), packet.signatureBase64
-                                ) ?: false
-                                if (!valid) {
-                                    Log.w(TAG, "Security Alert: Signature mismatch for text from ${packet.senderId}")
-                                }
-                            }
-                        }
-
-                        val convId = if (packet.isGroup && !packet.groupId.isNullOrBlank()) packet.groupId else packet.senderId
-                        val isCurrentConv = tcpMessagingManager.getActiveConversationId() == convId
-                        val initialStatus = if (isCurrentConv) MessageStatus.READ else MessageStatus.DELIVERED
-                        val entity = ChatMessageEntity(
-                            id = packet.messageId, conversationId = convId, senderId = packet.senderId,
-                            senderName = packet.senderName, recipientId = packet.recipientId,
-                            text = packet.text, isFromMe = false, status = initialStatus,
-                            isMeshRelayed = true, isGroup = packet.isGroup, groupName = packet.groupName,
-                            isSenderDeveloper = packet.isDeveloper, timestamp = packet.timestamp
-                        )
-                        database.chatMessageDao().insertMessage(entity)
-                        sendAckToSender(packet.senderId, packet.messageId, fromEndpointId)
-                        if (isCurrentConv) sendReadAckToSender(packet.senderId, packet.messageId, fromEndpointId)
+                        // The verdict and the insert live in MeshTextReceiver, so
+                        // a refusal here and a refusal in the test are the same
+                        // refusal rather than two implementations that can drift.
+                        meshTextReceiver.receive(packet, fromEndpointId)
                     }
                     is VoiceMessagePacket -> {
                         val convId = if (packet.isGroup && !packet.groupId.isNullOrBlank()) packet.groupId else packet.senderId
