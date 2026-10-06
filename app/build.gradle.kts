@@ -60,13 +60,6 @@ android {
   testOptions { 
     unitTests { isIncludeAndroidResources = true } 
   }
-
-  // Robolectric loads a large class graph per test and this suite also runs
-  // screenshot rendering, so the default worker heap is not enough and the task
-  // fails with "Java heap space" instead of anything useful.
-  tasks.withType<Test>().configureEach {
-    maxHeapSize = "3g"
-  }
   
   dependenciesInfo {
     includeInApk = false
