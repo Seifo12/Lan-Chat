@@ -8,4 +8,29 @@
     <string name="status_failed">لم يتم الإرسال</string>
     <string name="action_retry_send">إعادة المحاولة</string>
     <string name="system_peer_needs_update">%1$s يشغّل نسخة أقدم من LAN Chat. لا يمكن التحقق من رسائل هذا الجهاز حتى يحدّث التطبيق. ورسائلك لن تصل إليه أيضًا.</string>
+    <!-- Contact security, Phase 1.7b -->
+    <string name="security_title">أمان جهة الاتصال</string>
+    <string name="security_state_unverified">غير مُتحقق</string>
+    <string name="security_state_verified">مُتحقق</string>
+    <string name="security_state_key_changed">المفتاح تغيّر</string>
+    <string name="security_unverified_explainer">لم تتأكد بعد من هوية هذا الشخص. اقرأ عليه الكود بالأسفل، أو في مكالمة، وقارنه.</string>
+    <string name="security_verified_explainer">لقد أكّدت هوية هذا الشخص بمقارنة الكود.</string>
+    <string name="security_key_changed_title">هذا الجهاز بيستخدم مفتاح مختلف</string>
+    <string name="security_key_changed_explainer">الرسائل متوقفة. ده ممكن يحصل لو هو ثبّت التطبيق من جديد، أو ممكن يعني إن حد تاني بيعمل نفسه مكانه. قارن الأكواد شخصيًا أو في مكالمة قبل ما تقبل.</string>
+    <string name="security_code_label">كود الأمان</string>
+    <string name="security_code_read_aloud">اقرأ المجموعات دي بصوت عالي، بالترتيب.</string>
+    <string name="security_code_unavailable">مفيش كود طول ما المفاتيح مختلفة.</string>
+    <string name="security_mark_verified">قارنت الأكواد، علّمه كـ مُتحقق</string>
+    <string name="security_marked_verified">تم التعليم كـ مُتحقق</string>
+    <string name="security_accept_new_key">اقبل المفتاح الجديد</string>
+    <string name="security_accept_new_key_confirm_title">تقبل مفتاح جديد؟</string>
+    <string name="security_accept_new_key_confirm_body">اقبل ده بس لو أكّدت الكود الجديد شخصيًا أو في مكالمة. بعد القبول، رسائل جهة الاتصال هتتبعت لحد بيحمل المفتاح ده.</string>
+    <string name="security_accept_new_key_confirm_yes">اقبل المفتاح الجديد</string>
+    <string name="security_accept_new_key_confirm_no">إلغاء</string>
+    <string name="security_accepted_new_key">تم قبول المفتاح الجديد</string>
+    <string name="security_resend_failed">أعد إرسال الرسائل اللي فشلت</string>
+    <string name="security_resend_none">مفيش رسائل فاشلة لإعادة إرسالها</string>
+    <string name="security_resent_count">جاري إعادة إرسال %1$d رسالة</string>
+    <string name="security_pin_missing">لسه مفيش مفتاح مثبّت لجهة الاتصال دي</string>
+    <string name="security_no_paired_key">جهة الاتصال دي ما شاركتش مفتاح، فمفيش حاجة تتأكد منها</string>
 </resources>

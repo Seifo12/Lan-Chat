@@ -17,6 +17,7 @@ import com.example.data.local.ChatMessageEntity
 import com.example.data.local.ContactEntity
 import com.example.data.local.GroupEntity
 import com.example.data.local.MessageStatus
+import com.example.data.security.ContactTrust
 import com.example.data.local.UserPreferences
 import com.example.data.network.AppShareState
 import com.example.data.network.AudioPlayerHelper
@@ -226,6 +227,18 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
 
     private val _showSettingsScreen = MutableStateFlow(false)
     val showSettingsScreen: StateFlow<Boolean> = _showSettingsScreen.asStateFlow()
+
+    /**
+     * Phase 1.7b: the contact whose security screen is open, or null when none is.
+     * Held as a [ContactTrust] rather than a device id so the screen renders from a
+     * single source of truth instead of re-deriving the state itself.
+     */
+    private val _contactSecurity = MutableStateFlow<ContactTrust?>(null)
+    val contactSecurity: StateFlow<ContactTrust?> = _contactSecurity.asStateFlow()
+
+    /** How many of that contact's messages are failed and waiting to be resent. */
+    private val _failedMessageCount = MutableStateFlow(0)
+    val failedMessageCount: StateFlow<Int> = _failedMessageCount.asStateFlow()
 
     private val _localIpAddress = MutableStateFlow<String?>(null)
     val localIpAddress: StateFlow<String?> = _localIpAddress.asStateFlow()
@@ -491,6 +504,75 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
 
     fun setShowSettingsScreen(show: Boolean) {
         _showSettingsScreen.value = show
+    }
+
+    // ----- Phase 1.7b: contact security -----
+
+    /** Opens the security screen for a contact, or closes it when given null. */
+    fun openContactSecurity(deviceId: String?) {
+        if (deviceId == null) {
+            _contactSecurity.value = null
+            _failedMessageCount.value = 0
+            return
+        }
+        viewModelScope.launch(Dispatchers.IO) {
+            val contact = database.contactDao().getContactById(deviceId) ?: return@launch
+            refreshContactSecurity(contact)
+        }
+    }
+
+    fun closeContactSecurity() {
+        _contactSecurity.value = null
+        _failedMessageCount.value = 0
+    }
+
+    private suspend fun refreshContactSecurity(contact: ContactEntity) {
+        _contactSecurity.value = ContactTrust(
+            deviceId = contact.deviceId,
+            displayName = contact.customNickname?.takeIf { it.isNotBlank() }
+                ?: contact.displayName,
+            pinnedPublicKey = contact.pinnedPublicKey,
+            observedPublicKey = contact.publicKeyBase64,
+            verifiedAt = contact.verifiedAt,
+        )
+        _failedMessageCount.value =
+            database.chatMessageDao().getFailedMessagesIn(contact.deviceId).size
+    }
+
+    /**
+     * The user compared the safety code and says so. This only records that the
+     * comparison happened; it never moves the pin.
+     */
+    fun markContactVerified(deviceId: String) {
+        viewModelScope.launch(Dispatchers.IO) {
+            database.contactDao().markVerified(deviceId, System.currentTimeMillis())
+            database.contactDao().getContactById(deviceId)?.let { refreshContactSecurity(it) }
+        }
+    }
+
+    /**
+     * The user accepted a different key. This is the only way out of a key change
+     * and it is never called automatically, which is why it lives here as an
+     * explicit action rather than inside the key update path.
+     */
+    fun acceptChangedKey(deviceId: String) {
+        viewModelScope.launch(Dispatchers.IO) {
+            val contact = database.contactDao().getContactById(deviceId) ?: return@launch
+            val observed = contact.publicKeyBase64 ?: return@launch
+            database.contactDao().acceptNewKey(deviceId, observed)
+            database.contactDao().getContactById(deviceId)?.let { refreshContactSecurity(it) }
+        }
+    }
+
+    /** Puts every failed message for this contact back on the wire, in order. */
+    fun resendFailedMessages(deviceId: String) {
+        viewModelScope.launch(Dispatchers.IO) {
+            val failed = database.chatMessageDao().getFailedMessagesIn(deviceId)
+            for (message in failed) {
+                tcpMessaging.retryMessage(message)
+            }
+            database.contactDao().getContactById(deviceId)?.let { refreshContactSecurity(it) }
+        }
     }
 
     fun buildMyQrPayload(): String? {

@@ -31,6 +31,7 @@ import androidx.lifecycle.viewmodel.compose.viewModel
 import com.example.ui.ChatViewModel
 import com.example.ui.screens.CallOverlayScreen
 import com.example.ui.screens.ChatScreen
+import com.example.ui.screens.ContactSecurityScreen
 import com.example.ui.screens.HomeScreen
 import com.example.ui.screens.SettingsScreen
 import com.example.ui.theme.CanvasBackground
@@ -39,7 +40,10 @@ import com.example.ui.theme.LanChatTheme
 enum class AppScreen {
     HOME,
     CHAT,
-    SETTINGS
+    SETTINGS,
+
+    /** Phase 1.7b: the trust state and safety code for one contact. */
+    CONTACT_SECURITY
 }
 
 class MainActivity : ComponentActivity() {
@@ -76,6 +80,8 @@ fun MainAppNavHost(
     val activeContact by viewModel.activeContact.collectAsState()
     val activeGroup by viewModel.activeGroup.collectAsState()
     val showSettingsScreen by viewModel.showSettingsScreen.collectAsState()
+    val contactSecurity by viewModel.contactSecurity.collectAsState()
+    val failedMessageCount by viewModel.failedMessageCount.collectAsState()
     val currentCall by viewModel.currentCall.collectAsState()
 
     val micPermissionLauncher = rememberLauncherForActivityResult(
@@ -106,6 +112,7 @@ fun MainAppNavHost(
     }
 
     val currentScreen = when {
+        contactSecurity != null -> AppScreen.CONTACT_SECURITY
         showSettingsScreen -> AppScreen.SETTINGS
         activeContact != null || activeGroup != null -> AppScreen.CHAT
         else -> AppScreen.HOME
@@ -118,6 +125,7 @@ fun MainAppNavHost(
                 viewModel.selectContact(null)
                 viewModel.selectGroup(null)
             }
+            AppScreen.CONTACT_SECURITY -> viewModel.closeContactSecurity()
             AppScreen.HOME -> Unit
         }
     }
@@ -142,6 +150,23 @@ fun MainAppNavHost(
                 .background(com.example.ui.theme.AppTheme.colors.background)
         ) { screen ->
             when (screen) {
+                AppScreen.CONTACT_SECURITY -> {
+                    val target = contactSecurity ?: return@AnimatedContent
+                    ContactSecurityScreen(
+                        trust = target,
+                        failedMessageCount = failedMessageCount,
+                        onBack = { viewModel.closeContactSecurity() },
+                        onMarkVerified = {
+                            viewModel.markContactVerified(target.deviceId)
+                        },
+                        onAcceptNewKey = {
+                            viewModel.acceptChangedKey(target.deviceId)
+                        },
+                        onResendFailed = {
+                            viewModel.resendFailedMessages(target.deviceId)
+                        },
+                    )
+                }
                 AppScreen.SETTINGS -> {
                     SettingsScreen(
                         viewModel = viewModel,

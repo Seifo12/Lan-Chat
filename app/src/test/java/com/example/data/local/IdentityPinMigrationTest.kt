@@ -68,6 +68,7 @@ class IdentityPinMigrationTest {
         helper.runMigrationsAndValidate(
             dbName, SCHEMA_VERSION, true,
             ChatDatabase.MIGRATION_11_12,
+            ChatDatabase.MIGRATION_12_13,
         ).close()
         return Room.databaseBuilder(context, ChatDatabase::class.java, dbName).build()
     }

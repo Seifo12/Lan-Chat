@@ -40,6 +40,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Security
 import androidx.compose.material.icons.filled.ErrorOutline
 import androidx.compose.material.icons.filled.Schedule
 import androidx.compose.material.icons.filled.Add
@@ -631,6 +632,9 @@ fun HomeScreen(
                                     onOpenChat(conv.contact)
                                 }
                             },
+                            onOpenContactSecurity = { contact ->
+                                viewModel.openContactSecurity(contact.deviceId)
+                            },
                             onVoiceCall = { contact ->
                                 // الـ ViewModel هو اللي بيتحكم في البوطة: لو الإذن
                                 // مش موجود بيحفظ الطلب كـ pending ويطلب الإذن، وبعد
@@ -865,6 +869,8 @@ private fun ChatsTabContent(
     onVoiceCall: (ContactEntity) -> Unit,
     onEditContact: (ContactEntity) -> Unit,
     onDeleteContact: (ContactEntity) -> Unit,
+    /** Phase 1.7b: opens the trust state and safety code for this contact. */
+    onOpenContactSecurity: (ContactEntity) -> Unit,
     onClearConversation: (String) -> Unit,
     onRetrySend: (String) -> Unit,
     onStartNewChat: () -> Unit,
@@ -1105,6 +1111,21 @@ private fun ChatsTabContent(
                                         }
 
                                         Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                                            IconButton(
+                                                onClick = { onOpenContactSecurity(contact) },
+                                                modifier = Modifier
+                                                    .size(38.dp)
+                                                    .clip(CircleShape)
+                                                    .background(AppTheme.colors.surfaceVariant)
+                                            ) {
+                                                Icon(
+                                                    Icons.Default.Security,
+                                                    contentDescription = stringResource(R.string.security_title),
+                                                    tint = AppTheme.colors.textPrimary,
+                                                    modifier = Modifier.size(18.dp)
+                                                )
+                                            }
+
                                             IconButton(
                                                 onClick = { onVoiceCall(contact) },
                                                 modifier = Modifier

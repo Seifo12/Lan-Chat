@@ -61,6 +61,16 @@ interface ChatMessageDao {
     )
     suspend fun getStaleSendingMessages(threshold: Long): List<ChatMessageEntity>
 
+    /**
+     * Phase 1.7b: the messages blocked by a key change, so they can be put back on
+     * the wire in one tap once the user has accepted the new key.
+     */
+    @Query(
+        "SELECT * FROM messages WHERE conversationId = :conversationId " +
+            "AND isFromMe = 1 AND status = 'FAILED' ORDER BY receivedAt ASC, timestamp ASC"
+    )
+    suspend fun getFailedMessagesIn(conversationId: String): List<ChatMessageEntity>
+
     @Query("DELETE FROM messages WHERE conversationId = :conversationId")
     suspend fun clearConversation(conversationId: String)
 }
@@ -90,6 +100,15 @@ interface ContactDao {
 
     @Query("UPDATE contacts SET isOnline = 0 WHERE :currentTime - lastSeen > :timeoutMs")
     suspend fun markInactiveContactsOffline(currentTime: Long, timeoutMs: Long = 10000L)
+
+    /**
+     * Phase 1.7b: the user compared the safety code. This records only that the
+     * comparison happened and deliberately leaves [ContactEntity.pinnedPublicKey]
+     * alone, because confirming a code and accepting a different identity are not
+     * the same decision.
+     */
+    @Query("UPDATE contacts SET verifiedAt = :verifiedAt WHERE deviceId = :deviceId")
+    suspend fun markVerified(deviceId: String, verifiedAt: Long)
 
     /**
      * Phase 1.6: record the key a peer presented, and raise the block if it is not

@@ -146,7 +146,13 @@ data class ContactEntity(
      * Phase 1.6: true once a key different from [pinnedPublicKey] has been seen.
      * While set, nothing is sent to this peer until the user accepts the new key.
      */
-    val hasKeyChanged: Boolean = false
+    val hasKeyChanged: Boolean = false,
+    /**
+     * Phase 1.7b: when the user compared the safety code and confirmed this
+     * contact. Null means unverified, which is the honest default for first
+     * contact in a serverless mesh. Recording this never moves the pin.
+     */
+    val verifiedAt: Long? = null
 )
 
 @Entity(tableName = "groups")

@@ -10,4 +10,29 @@
     <string name="status_failed">Not delivered</string>
     <string name="action_retry_send">Try again</string>
     <string name="system_peer_needs_update">%1$s is running an older version of LAN Chat. Messages from this device cannot be verified until they update. Your messages will not reach them either.</string>
+    <!-- Contact security, Phase 1.7b -->
+    <string name="security_title">Contact security</string>
+    <string name="security_state_unverified">Unverified</string>
+    <string name="security_state_verified">Verified</string>
+    <string name="security_state_key_changed">Key changed</string>
+    <string name="security_unverified_explainer">You have not confirmed this person\'s identity yet. Read the code below to them, or in a call, and compare it.</string>
+    <string name="security_verified_explainer">You confirmed this person\'s identity by comparing the code.</string>
+    <string name="security_key_changed_title">This device is using a different key</string>
+    <string name="security_key_changed_explainer">Messages are blocked. This can happen if they reinstalled the app, or it can mean someone else is pretending to be them. Compare the codes in person or in a call before you accept.</string>
+    <string name="security_code_label">Safety code</string>
+    <string name="security_code_read_aloud">Read these groups aloud, in order.</string>
+    <string name="security_code_unavailable">No code while the keys disagree.</string>
+    <string name="security_mark_verified">I compared the codes, mark verified</string>
+    <string name="security_marked_verified">Marked verified</string>
+    <string name="security_accept_new_key">Accept the new key</string>
+    <string name="security_accept_new_key_confirm_title">Accept a new key?</string>
+    <string name="security_accept_new_key_confirm_body">Only accept this if you have confirmed the new code in person or in a call. After accepting, messages to this contact will be sent to whoever now holds this key.</string>
+    <string name="security_accept_new_key_confirm_yes">Accept the new key</string>
+    <string name="security_accept_new_key_confirm_no">Cancel</string>
+    <string name="security_accepted_new_key">New key accepted</string>
+    <string name="security_resend_failed">Resend messages that failed</string>
+    <string name="security_resend_none">No failed messages to resend</string>
+    <string name="security_resent_count">Resending %1$d message(s)</string>
+    <string name="security_pin_missing">No key has been pinned for this contact yet</string>
+    <string name="security_no_paired_key">This contact has not shared a key, so there is nothing to verify</string>
 </resources>

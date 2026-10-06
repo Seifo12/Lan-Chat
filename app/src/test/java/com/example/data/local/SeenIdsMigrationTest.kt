@@ -60,6 +60,7 @@ class SeenIdsMigrationTest {
             dbName, SCHEMA_VERSION, true,
             ChatDatabase.MIGRATION_9_10, ChatDatabase.MIGRATION_10_11,
             ChatDatabase.MIGRATION_11_12,
+            ChatDatabase.MIGRATION_12_13,
         ).close()
     }
 
