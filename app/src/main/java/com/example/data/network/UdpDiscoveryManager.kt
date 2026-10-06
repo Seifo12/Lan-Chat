@@ -4,7 +4,6 @@ import android.content.Context
 import android.util.Log
 import com.example.data.local.ChatDatabase
 import com.example.data.local.ContactEntity
-import com.example.data.local.GroupEntity
 import com.example.data.local.UserPreferences
 import com.example.data.security.EncryptionManager
 import kotlinx.coroutines.CoroutineScope
@@ -79,34 +78,6 @@ class UdpDiscoveryManager(
         activeBurstCounter.set(5)
         scope.launch {
             sendBeacon()
-        }
-    }
-
-    fun broadcastGroupAnnounce(group: GroupEntity) {
-        scope.launch {
-            val announce = GroupAnnouncePacket(
-                groupId = group.groupId,
-                groupName = group.groupName,
-                description = group.description,
-                createdBy = group.createdBy,
-                avatarColorIndex = group.avatarColorIndex,
-                createdAt = group.createdAt
-            )
-            val jsonBytes = announce.toJson().toByteArray(Charsets.UTF_8)
-            val broadcastAddresses = NetworkUtils.getBroadcastAddresses()
-            var socket: DatagramSocket? = null
-            try {
-                socket = DatagramSocket()
-                socket.broadcast = true
-                for (address in broadcastAddresses) {
-                    val packet = DatagramPacket(jsonBytes, jsonBytes.size, address, UDP_PORT)
-                    socket.send(packet)
-                }
-            } catch (e: Exception) {
-                Log.e(TAG, "Error announcing group: ${e.message}")
-            } finally {
-                try { socket?.close() } catch (_: Exception) {}
-            }
         }
     }
 
@@ -200,62 +171,7 @@ class UdpDiscoveryManager(
 
                     val jsonStr = String(packet.data, 0, packet.length, Charsets.UTF_8)
                     val senderIp = packet.address.hostAddress ?: continue
-                    val networkPacket = NetworkPacket.fromJson(jsonStr) ?: continue
-
-                    when (networkPacket) {
-                        is BeaconPacket -> {
-                            if (networkPacket.deviceId.isBlank() ||
-                                networkPacket.deviceId.length > MAX_DEVICE_ID_LENGTH
-                            ) continue
-                            if (networkPacket.deviceId != userPreferences.deviceId) {
-                                handlePeerDiscovered(
-                                    deviceId = networkPacket.deviceId,
-                                    name = networkPacket.displayName.take(MAX_DISPLAY_NAME_LENGTH),
-                                    avatarColorIndex = networkPacket.avatarColorIndex.coerceIn(0, 100),
-                                    ip = senderIp,
-                                    port = networkPacket.tcpPort.coerceIn(1, 65535),
-                                    isDeveloper = networkPacket.isDeveloper,
-                                    versionCode = networkPacket.versionCode.coerceAtLeast(1),
-                                    versionName = networkPacket.versionName.take(50),
-                                    isMesh = networkPacket.isMeshSupported,
-                                    publicKeyBase64 = networkPacket.publicKeyBase64
-                                )
-                                sendBeaconAck(packet.address, networkPacket.tcpPort.coerceIn(1, 65535))
-                            }
-                        }
-                        is BeaconAckPacket -> {
-                            if (networkPacket.deviceId.isBlank() ||
-                                networkPacket.deviceId.length > MAX_DEVICE_ID_LENGTH
-                            ) continue
-                            if (networkPacket.deviceId != userPreferences.deviceId) {
-                                handlePeerDiscovered(
-                                    deviceId = networkPacket.deviceId,
-                                    name = networkPacket.displayName.take(MAX_DISPLAY_NAME_LENGTH),
-                                    avatarColorIndex = networkPacket.avatarColorIndex.coerceIn(0, 100),
-                                    ip = senderIp,
-                                    port = networkPacket.tcpPort.coerceIn(1, 65535),
-                                    isDeveloper = networkPacket.isDeveloper,
-                                    versionCode = networkPacket.versionCode.coerceAtLeast(1),
-                                    versionName = networkPacket.versionName.take(50),
-                                    isMesh = networkPacket.isMeshSupported,
-                                    publicKeyBase64 = networkPacket.publicKeyBase64
-                                )
-                            }
-                        }
-                        is GroupAnnouncePacket -> {
-                            if (networkPacket.groupId.isBlank()) continue
-                            val group = GroupEntity(
-                                groupId = networkPacket.groupId,
-                                groupName = networkPacket.groupName.take(MAX_DISPLAY_NAME_LENGTH),
-                                description = networkPacket.description.take(1000),
-                                createdBy = networkPacket.createdBy,
-                                createdAt = networkPacket.createdAt,
-                                avatarColorIndex = networkPacket.avatarColorIndex.coerceIn(0, 100)
-                            )
-                            database.groupDao().insertOrUpdateGroup(group)
-                        }
-                        else -> {}
-                    }
+                    handleDiscoveryPacket(jsonStr, senderIp, packet.address)
                 } catch (e: Exception) {
                     if (isActive) {
                         if (e is java.net.BindException || e is java.net.SocketException) {
@@ -277,6 +193,61 @@ class UdpDiscoveryManager(
         }
     }
 
+
+    /**
+     * Phase 1.8: one packet, no socket. Extracted so tests can prove what
+     * the loop does with a packet without standing up UDP.
+     */
+    internal suspend fun handleDiscoveryPacket(
+        jsonStr: String,
+        senderIp: String,
+        senderAddress: java.net.InetAddress,
+    ) {
+        val networkPacket = NetworkPacket.fromJson(jsonStr) ?: return
+
+        when (networkPacket) {
+            is BeaconPacket -> {
+                if (networkPacket.deviceId.isBlank() ||
+                    networkPacket.deviceId.length > MAX_DEVICE_ID_LENGTH
+                ) return
+                if (networkPacket.deviceId != userPreferences.deviceId) {
+                    handlePeerDiscovered(
+                        deviceId = networkPacket.deviceId,
+                        name = networkPacket.displayName.take(MAX_DISPLAY_NAME_LENGTH),
+                        avatarColorIndex = networkPacket.avatarColorIndex.coerceIn(0, 100),
+                        ip = senderIp,
+                        port = networkPacket.tcpPort.coerceIn(1, 65535),
+                        isDeveloper = networkPacket.isDeveloper,
+                        versionCode = networkPacket.versionCode.coerceAtLeast(1),
+                        versionName = networkPacket.versionName.take(50),
+                        isMesh = networkPacket.isMeshSupported,
+                        publicKeyBase64 = networkPacket.publicKeyBase64
+                    )
+                    sendBeaconAck(senderAddress, networkPacket.tcpPort.coerceIn(1, 65535))
+                }
+            }
+            is BeaconAckPacket -> {
+                if (networkPacket.deviceId.isBlank() ||
+                    networkPacket.deviceId.length > MAX_DEVICE_ID_LENGTH
+                ) return
+                if (networkPacket.deviceId != userPreferences.deviceId) {
+                    handlePeerDiscovered(
+                        deviceId = networkPacket.deviceId,
+                        name = networkPacket.displayName.take(MAX_DISPLAY_NAME_LENGTH),
+                        avatarColorIndex = networkPacket.avatarColorIndex.coerceIn(0, 100),
+                        ip = senderIp,
+                        port = networkPacket.tcpPort.coerceIn(1, 65535),
+                        isDeveloper = networkPacket.isDeveloper,
+                        versionCode = networkPacket.versionCode.coerceAtLeast(1),
+                        versionName = networkPacket.versionName.take(50),
+                        isMesh = networkPacket.isMeshSupported,
+                        publicKeyBase64 = networkPacket.publicKeyBase64
+                    )
+                }
+            }
+            else -> {}
+        }
+    }
     fun triggerImmediateBeacon() {
         activeBurstCounter.set(3)
         scope.launch(Dispatchers.IO) {
