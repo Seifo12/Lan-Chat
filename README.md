@@ -177,11 +177,15 @@ The following are real, known gaps:
   refusing new messages until the session is re-established. Finally, voice
   frames use their own per-call sequence guard, which protects ordering within a
   call but not across calls.
-- **Peers must both be on protocol version 2 or newer.** An older peer cannot be
-  talked to, because its packets sign only the message text. The refusal is never
-  silent: a system message appears in the conversation saying the peer needs to
-  update. Mixed-version deployments will not exchange messages until both sides
-  are current.
+- **Peers must both be on protocol version 2 or newer, and groups need 3.**
+  An older peer cannot be talked to, because its packets sign only the message
+  text. The refusal is never silent: a system message appears in the
+  conversation saying the peer needs to update. Mixed-version deployments will
+  not exchange messages until both sides are current. Group invitations and
+  group-bound message digests are version 3: they are refused toward a v2 peer
+  before sending, with the same update notice, instead of vanishing into the
+  silent drop unknown packet types get. Direct text keeps flowing to v2 peers
+  unchanged.
 - **Only text messages are signature-enforced.** Direct text over TCP and text
   over mesh go through the full verification path: a missing signature, a bad
   signature, an unknown sender, an old protocol version, a duplicate, and a
@@ -212,6 +216,18 @@ The following are real, known gaps:
   it is reached from that one dialog and from nowhere in the key update path.
   A previously verified contact is not still verified when its key changes:
   yesterday's confirmation is not evidence about today's key holder.
+- **Groups are invitation-only and member-checked.** A group invitation is a
+  signed version-3 message naming the creator, the group, the full member
+  list with every member's key, a version, a nonce, and an expiry. Joining
+  takes an explicit accept tap; a verified invitation waiting for a decision
+  joins nothing. Only the creator signs member lists, at strictly higher
+  versions; members can still leave on their own. Group messages are stored
+  only for mutual members, unknown group ids never create groups, and the
+  group id is bound into the message digest so a signed message cannot move
+  between groups. Groups from before this change are legacy: readable
+  history that refuses new sends, with a recreate-as-secured action. Members
+  who are not paired contacts are creator-vouched inside that group only;
+  where a vouched key differs from a pinned one, the pin wins.
 - **The transport is not yet pinned.** There is no mutual TLS with a pinned peer
   identity yet. A network attacker in radio range is not defended against
   impersonation today. Mutual TLS with a pinned peer identity is planned; see the
@@ -323,7 +339,7 @@ per clone with:
 git config core.hooksPath scripts/hooks
 ```
 
-Current state: **336 unit tests, 0 failures**, lint clean.
+Current state: **391 unit tests, 0 failures**, lint clean.
 
 ---
 
