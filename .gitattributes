@@ -1,0 +1,22 @@
+# Canonical line endings.
+#
+# One form in the repository: LF. The working tree uses LF for every text
+# file, so a diff is always a real content change and never a line-ending
+# artefact. Windows batch scripts are the single exception, because cmd.exe
+# label and GOTO handling is not safe with LF-only endings.
+#
+# `text=auto` means git detects binary content and leaves it untouched; `eol=lf`
+# pins the checkout form so the working tree does not depend on core.autocrlf
+# or on which machine the clone happens on.
+* text=auto eol=lf
+
+*.bat text eol=crlf
+
+# Binary. Never line-ending normalised. Listed explicitly rather than left to
+# content detection, so a future editor or export that changes a file's bytes
+# cannot silently convert an image or a jar into text.
+*.jar  binary
+*.png  binary
+*.jpg  binary
+*.jpeg binary
+*.webp binary
