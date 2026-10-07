@@ -33,6 +33,16 @@ class GroupInviteAcceptFlowTest {
     private lateinit var viewModel: ChatViewModel
 
     /**
+     * A `launch` inside viewModelScope whose body throws hands the throwable to
+     * the default uncaught-exception handler and the coroutine simply never
+     * calls back. Under a full-suite run that produced a bare "timed out
+     * waiting" with the real cause discarded, which pointed the investigation
+     * at thread starvation instead of at the exception. Capture them so a
+     * timeout always reports why.
+     */
+    private val uncaught = java.util.concurrent.CopyOnWriteArrayList<Throwable>()
+
+    /**
      * Every test mints its own ids. The app database can outlive a single
      * test method, JUnit rebuilds this class per method (so a counter would
      * reset), and invites insert with IGNORE, so sharing one id lets a
@@ -45,6 +55,12 @@ class GroupInviteAcceptFlowTest {
 
     @Before
     fun setUp() {
+        uncaught.clear()
+        val previous = Thread.getDefaultUncaughtExceptionHandler()
+        Thread.setDefaultUncaughtExceptionHandler { thread, error ->
+            uncaught.add(error)
+            previous?.uncaughtException(thread, error)
+        }
         application =
             androidx.test.core.app.ApplicationProvider.getApplicationContext<Application>() as LanChatApplication
         // The recreate path mints keys through the pairwise manager. Relying
@@ -99,7 +115,31 @@ class GroupInviteAcceptFlowTest {
             if (runBlocking { condition() }) return
             Thread.sleep(100)
         } while (System.currentTimeMillis() < deadline)
-        throw AssertionError("timed out waiting: $message")
+        val causes = if (uncaught.isEmpty()) "" else "\nuncaught while waiting:\n  " + uncaught.joinToString("\n  ") { it.toString() }
+        throw AssertionError("timed out waiting: $message$causes" + threadSnapshot())
+    }
+
+    /**
+     * When a wait times out, the useful question is what every other thread is
+     * blocked on, not that one thread made no progress. Grouped by top frame so
+     * a hundred identical leaked loops read as one line.
+     */
+    private fun threadSnapshot(): String {
+        val skip = setOf("Reference Handler", "Finalizer", "Signal Dispatcher", "process reaper", "Common-Cleaner")
+        val snapshots = Thread.getAllStackTraces()
+        val counts = HashMap<String, Int>()
+        for (entry in snapshots.entries) {
+            if (entry.key.name in skip) continue
+            val stack = entry.value
+            val frame = stack.firstOrNull {
+                it.className.startsWith("kotlin") || it.className.startsWith("com.example") ||
+                    it.className.startsWith("android")
+            } ?: stack.firstOrNull()
+            val key = frame?.let { it.className.substringAfterLast('.') + "." + it.methodName } ?: "other"
+            counts[key] = (counts[key] ?: 0) + 1
+        }
+        return "\nthreads alive: ${snapshots.size}, grouped by top frame: " +
+            counts.entries.sortedByDescending { it.value }.joinToString("; ") { "${it.value}x ${it.key}" }
     }
 
     @Test
@@ -154,9 +194,18 @@ class GroupInviteAcceptFlowTest {
             )
         }
 
+        var callbackFired = false
         var created: GroupEntity? = null
-        viewModel.recreateLegacyGroup("g_legacy_flow", emptyList()) { created = it }
-        waitFor("secured group created") { created != null }
+        viewModel.recreateLegacyGroup("g_legacy_flow", emptyList()) {
+            created = it
+            callbackFired = true
+        }
+        waitFor("recreate answered") { callbackFired }
+        assertNotNull(
+            "recreate answered but produced no group; pairwise manager present=" +
+                "(com.example.data.security.EncryptionManager.getPairwiseManager() != null)",
+            created
+        )
 
         runBlocking {
             assertEquals("Old Days", created!!.groupName)
