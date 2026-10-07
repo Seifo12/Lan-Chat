@@ -1197,16 +1197,31 @@ private val messageCounters: MessageCounters by lazy { MessageCounters(database.
      * Invite delivery is best-effort per peer like every other send; the
      * roster is authoritative regardless of which legs arrive.
      */
+    /**
+     * Runs on the caller's dispatcher on purpose.
+     *
+     * Every production caller is a ChatViewModel action that launches on
+     * `io`, which is Dispatchers.IO in production, so behaviour is unchanged.
+     * The hardcoded `withContext(Dispatchers.IO)` that used to be here forced
+     * the work back onto the shared pool even when a caller had deliberately
+     * chosen another one, which is what made the ViewModel's injected test
+     * dispatcher ineffective: the recreate test still queued behind roughly
+     * 120 leaked UDP receiver threads and timed out about one run in three.
+     *
+     * A new caller must therefore launch on Dispatchers.IO. Room suspend
+     * queries dispatch to the database executor regardless, but the key
+     * material read below does not, and that must not land on the main thread.
+     */
     suspend fun createSecuredGroup(
         name: String,
         description: String,
         avatarColorIndex: Int,
         memberIds: List<String>,
-    ): GroupEntity? = withContext(Dispatchers.IO) {
-        if (name.isBlank()) return@withContext null
+    ): GroupEntity? {
+        if (name.isBlank()) return null
         val me = userPreferences.deviceId
         val myKey = EncryptionManager.getPairwiseManager()?.getMyPublicKeyBase64()
-            ?: return@withContext null
+            ?: return null
         val now = System.currentTimeMillis()
         val groupId = GroupInviteCodec.newGroupId()
         database.groupDao().insertOrUpdateGroup(
@@ -1244,7 +1259,7 @@ private val messageCounters: MessageCounters by lazy { MessageCounters(database.
             val peer = database.contactDao().getContactById(id) ?: continue
             sendGroupInviteMessage(peer, invite)
         }
-        database.groupDao().getGroupById(groupId)
+        return database.groupDao().getGroupById(groupId)
     }
 
     /**
