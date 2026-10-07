@@ -47,6 +47,9 @@ class GroupInviteAcceptFlowTest {
     fun setUp() {
         application =
             androidx.test.core.app.ApplicationProvider.getApplicationContext<Application>() as LanChatApplication
+        // The recreate path mints keys through the pairwise manager. Relying
+        // on ambient static state passes in isolation and starves in suite.
+        com.example.data.security.EncryptionManager.initializePairwiseManager(application)
         // Unconfined: the actions would otherwise compete for the single
         // shared IO pool with hundreds of leaked threads from other test
         // classes in a full-suite run and starve. Production still gets IO.
