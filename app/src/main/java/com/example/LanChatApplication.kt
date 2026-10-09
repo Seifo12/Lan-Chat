@@ -61,6 +61,17 @@ class LanChatApplication : Application() {
         // 2. Initialize Hardware KeyStore and Pairwise ECDH Engine
         EncryptionManager.initializePairwiseManager(this)
 
+        // 2b. Clear transfers that a crash or a cancel left half-written.
+        //     The receive path renames temp_ to its final name only on success,
+        //     so an interrupted transfer leaves a file nothing else removes.
+        //     Best effort, and never fatal: a failed cleanup must not stop the
+        //     app from starting, and the files are inert either way.
+        try {
+            com.example.data.transfer.OrphanTempFileSweeper.sweep(this)
+        } catch (e: Exception) {
+            Log.w(TAG, "Orphan transfer sweep failed: ${e.message}")
+        }
+
         // 3. Initialize Shared Network Engines
         tcpMessagingManager = TcpMessagingManager(this, database, userPreferences)
         udpDiscoveryManager = UdpDiscoveryManager(this, database, userPreferences)
