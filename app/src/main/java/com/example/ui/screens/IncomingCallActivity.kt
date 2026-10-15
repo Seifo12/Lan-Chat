@@ -1,14 +1,10 @@
 package com.example.ui.screens
 
 import android.Manifest
-import android.app.KeyguardManager
 import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
-import android.os.Build
 import android.os.Bundle
-import android.os.PowerManager
-import android.view.WindowManager
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
@@ -85,14 +81,10 @@ class IncomingCallActivity : ComponentActivity() {
         }
     }
 
-    private var screenWakeLock: PowerManager.WakeLock? = null
-
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
 
-        setupLockscreenFlags()
-        acquireScreenWakeLock()
         LanNotificationHelper.cancelCallNotification(this)
 
         val callerName = intent.getStringExtra("EXTRA_CALLER_NAME") ?: "مستخدم غير معروف"
@@ -152,45 +144,9 @@ class IncomingCallActivity : ComponentActivity() {
         finish()
     }
 
-    private fun setupLockscreenFlags() {
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O_MR1) {
-            setShowWhenLocked(true)
-            setTurnScreenOn(true)
-            val keyguardManager = getSystemService(Context.KEYGUARD_SERVICE) as? KeyguardManager
-            keyguardManager?.requestDismissKeyguard(this, null)
-        } else {
-            @Suppress("DEPRECATION")
-            window.addFlags(
-                WindowManager.LayoutParams.FLAG_SHOW_WHEN_LOCKED or
-                        WindowManager.LayoutParams.FLAG_TURN_SCREEN_ON or
-                        WindowManager.LayoutParams.FLAG_DISMISS_KEYGUARD or
-                        WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON
-            )
-        }
-    }
-
-    private fun acquireScreenWakeLock() {
-        try {
-            val powerManager = getSystemService(Context.POWER_SERVICE) as PowerManager
-            screenWakeLock = powerManager.newWakeLock(
-                PowerManager.SCREEN_BRIGHT_WAKE_LOCK or PowerManager.ACQUIRE_CAUSES_WAKEUP,
-                "BasataLanChat::IncomingCallWakeLock"
-            ).apply {
-                acquire(30000L)
-            }
-        } catch (e: Exception) {
-            e.printStackTrace()
-        }
-    }
-
     override fun onDestroy() {
         super.onDestroy()
         LanNotificationHelper.cancelCallNotification(this)
-        try {
-            if (screenWakeLock?.isHeld == true) {
-                screenWakeLock?.release()
-            }
-        } catch (_: Exception) {}
     }
 }
 
